@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Dict, List
 
 from textual.app import ComposeResult
@@ -40,7 +41,8 @@ class MiniBoxScore(Widget):
         self._player_stats = player_stats or []
 
     def compose(self) -> ComposeResult:
-        table = DataTable(id=f"mini-box-{self._team_name}")
+        sanitized = re.sub(r"[^a-zA-Z0-9_-]", "-", self._team_name)
+        table = DataTable(id=f"mini-box-{sanitized}")
         table.add_columns("Player", "PTS", "REB", "AST", "FG", "+/-")
         yield table
 

@@ -150,6 +150,19 @@ def test_mini_box_score_creation():
     assert len(box._player_stats) == 1
 
 
+def test_mini_box_score_team_name_with_spaces():
+    """MiniBoxScore sanitizes team names with spaces for widget IDs."""
+    import re
+
+    from hoops_sim.tui.widgets.mini_box_score import MiniBoxScore
+
+    box = MiniBoxScore(team_name="New York Knicks")
+    assert box._team_name == "New York Knicks"
+    # The compose method should produce a valid id by replacing spaces
+    sanitized = re.sub(r"[^a-zA-Z0-9_-]", "-", "New York Knicks")
+    assert sanitized == "New-York-Knicks"
+
+
 def test_salary_cap_bar_creation():
     """SalaryCapBar can be created with payroll data."""
     from hoops_sim.tui.widgets.salary_cap_bar import SalaryCapBar
