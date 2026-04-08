@@ -169,6 +169,34 @@ class PlayerAttributes:
         """Total number of individual attributes."""
         return sum(1 for _ in self.iter_all())
 
+    def shooting_avg(self) -> int:
+        """Average of all shooting attributes."""
+        return int(round(_category_average(self.shooting)))
+
+    def finishing_avg(self) -> int:
+        """Average of all finishing attributes."""
+        return int(round(_category_average(self.finishing)))
+
+    def playmaking_avg(self) -> int:
+        """Average of all playmaking attributes."""
+        return int(round(_category_average(self.playmaking)))
+
+    def defense_avg(self) -> int:
+        """Average of all defensive attributes."""
+        return int(round(_category_average(self.defense)))
+
+    def rebounding_avg(self) -> int:
+        """Average of all rebounding attributes."""
+        return int(round(_category_average(self.rebounding)))
+
+    def athleticism_avg(self) -> int:
+        """Average of all athletic attributes."""
+        return int(round(_category_average(self.athleticism)))
+
+    def mental_avg(self) -> int:
+        """Average of all mental attributes."""
+        return int(round(_category_average(self.mental)))
+
 
 def _category_average(category: object) -> float:
     """Average all int fields in a dataclass."""

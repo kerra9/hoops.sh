@@ -14,7 +14,9 @@ from hoops_sim.models.attributes import (
 )
 from hoops_sim.models.badges import BadgeTier, PlayerBadges
 from hoops_sim.models.body import Handedness, HandSize, PlayerBody
+from hoops_sim.models.league import CONFERENCES, League
 from hoops_sim.models.player import Player, Position
+from hoops_sim.models.team import Team
 from hoops_sim.models.tendencies import PlayerTendencies
 from hoops_sim.utils.rng import SeededRNG
 
@@ -363,3 +365,73 @@ def generate_roster(rng: SeededRNG, size: int = 15) -> list[Player]:
         players.append(player)
 
     return players
+
+
+# Team name data for league generation
+TEAM_DATA = [
+    ("New York", "Knicks", "NYK", "East", "Atlantic"),
+    ("Boston", "Celtics", "BOS", "East", "Atlantic"),
+    ("Philadelphia", "76ers", "PHI", "East", "Atlantic"),
+    ("Toronto", "Raptors", "TOR", "East", "Atlantic"),
+    ("Brooklyn", "Nets", "BKN", "East", "Atlantic"),
+    ("Milwaukee", "Bucks", "MIL", "East", "Central"),
+    ("Cleveland", "Cavaliers", "CLE", "East", "Central"),
+    ("Chicago", "Bulls", "CHI", "East", "Central"),
+    ("Indiana", "Pacers", "IND", "East", "Central"),
+    ("Detroit", "Pistons", "DET", "East", "Central"),
+    ("Miami", "Heat", "MIA", "East", "Southeast"),
+    ("Atlanta", "Hawks", "ATL", "East", "Southeast"),
+    ("Orlando", "Magic", "ORL", "East", "Southeast"),
+    ("Charlotte", "Hornets", "CHA", "East", "Southeast"),
+    ("Washington", "Wizards", "WAS", "East", "Southeast"),
+    ("Denver", "Nuggets", "DEN", "West", "Northwest"),
+    ("Minnesota", "Timberwolves", "MIN", "West", "Northwest"),
+    ("Oklahoma City", "Thunder", "OKC", "West", "Northwest"),
+    ("Utah", "Jazz", "UTA", "West", "Northwest"),
+    ("Portland", "Trail Blazers", "POR", "West", "Northwest"),
+    ("Golden State", "Warriors", "GSW", "West", "Pacific"),
+    ("LA", "Lakers", "LAL", "West", "Pacific"),
+    ("LA", "Clippers", "LAC", "West", "Pacific"),
+    ("Phoenix", "Suns", "PHX", "West", "Pacific"),
+    ("Sacramento", "Kings", "SAC", "West", "Pacific"),
+    ("Dallas", "Mavericks", "DAL", "West", "Southwest"),
+    ("Houston", "Rockets", "HOU", "West", "Southwest"),
+    ("Memphis", "Grizzlies", "MEM", "West", "Southwest"),
+    ("New Orleans", "Pelicans", "NOP", "West", "Southwest"),
+    ("San Antonio", "Spurs", "SAS", "West", "Southwest"),
+]
+
+
+def generate_league(num_teams: int = 30, rng: Optional[SeededRNG] = None) -> League:
+    """Generate a full league with teams and rosters.
+
+    Args:
+        num_teams: Number of teams to generate (max 30).
+        rng: Seeded RNG for deterministic generation.
+
+    Returns:
+        A fully populated League.
+    """
+    if rng is None:
+        rng = SeededRNG(seed=42)
+
+    num_teams = min(num_teams, len(TEAM_DATA))
+    league = League(season_year=2025)
+    teams: List[Team] = []
+
+    for i in range(num_teams):
+        city, name, abbr, conf, div = TEAM_DATA[i]
+        roster = generate_roster(rng, size=15)
+        team = Team(
+            id=i + 1,
+            city=city,
+            name=name,
+            abbreviation=abbr,
+            conference=conf,
+            division=div,
+            roster=roster,
+        )
+        teams.append(team)
+
+    league.teams = teams
+    return league

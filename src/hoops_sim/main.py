@@ -4,9 +4,11 @@ from __future__ import annotations
 
 
 def main() -> None:
-    """Main entry point."""
-    print("Hoops Sim v0.1.0 - Phase 1: Foundation & Physics")
-    print("Run tests with: pytest")
+    """Main entry point -- launches the Textual TUI."""
+    from hoops_sim.tui.app import HoopsApp
+
+    app = HoopsApp()
+    app.run()
 
 
 if __name__ == "__main__":

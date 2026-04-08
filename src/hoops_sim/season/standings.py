@@ -123,3 +123,38 @@ class Standings:
     def playoff_teams(self, conference: str, count: int = 8) -> list[TeamRecord]:
         """Get the top teams for playoff seeding."""
         return self.conference_standings(conference)[:count]
+
+    def record_game(
+        self,
+        home_team_id: int,
+        away_team_id: int,
+        home_score: int,
+        away_score: int,
+        is_home_win: bool,
+        is_conference: bool,
+        is_division: bool,
+    ) -> None:
+        """Record a game result and update both team records."""
+        home_rec = self.records.get(home_team_id)
+        away_rec = self.records.get(away_team_id)
+        if home_rec is None or away_rec is None:
+            return
+
+        if is_home_win:
+            home_rec.record_win(
+                is_home=True, is_conference=is_conference,
+                is_division=is_division, pts_for=home_score, pts_against=away_score,
+            )
+            away_rec.record_loss(
+                is_home=False, is_conference=is_conference,
+                is_division=is_division, pts_for=away_score, pts_against=home_score,
+            )
+        else:
+            home_rec.record_loss(
+                is_home=True, is_conference=is_conference,
+                is_division=is_division, pts_for=home_score, pts_against=away_score,
+            )
+            away_rec.record_win(
+                is_home=False, is_conference=is_conference,
+                is_division=is_division, pts_for=away_score, pts_against=home_score,
+            )
