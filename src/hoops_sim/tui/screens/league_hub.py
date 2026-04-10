@@ -5,7 +5,7 @@ from __future__ import annotations
 from hoops_sim.models.league import League
 from hoops_sim.season.schedule import SeasonSchedule
 from hoops_sim.season.standings import Standings
-from hoops_sim.tui.base import Screen, console
+from hoops_sim.tui.base import Screen
 from hoops_sim.tui.widgets.leader_board import LeaderBoard
 from hoops_sim.tui.widgets.league_ticker import LeagueTicker
 from hoops_sim.tui.widgets.mini_schedule import MiniSchedule

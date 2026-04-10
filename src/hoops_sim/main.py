@@ -4,7 +4,7 @@ from __future__ import annotations
 
 
 def main() -> None:
-    """Main entry point -- launches the Rich-only TUI."""
+    """Main entry point -- launches the curses-based TUI."""
     from hoops_sim.tui.app import HoopsApp
 
     app = HoopsApp()
