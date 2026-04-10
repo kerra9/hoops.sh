@@ -1,15 +1,21 @@
-"""Sortable conference standings table from TeamRecord data."""
+"""Sortable conference standings table from TeamRecord data.
+
+Textual widget using DataTable for sortable, scrollable standings.
+"""
 
 from __future__ import annotations
 
 from typing import List
 
+from textual.app import ComposeResult
+from textual.widget import Widget
+from textual.widgets import DataTable
+
 from hoops_sim.season.standings import TeamRecord
-from hoops_sim.tui.base import Widget
 
 
-class StandingsTable(Widget):
-    """Sortable conference standings table.
+class StandingsTableWidget(Widget):
+    """Sortable conference standings table using Textual DataTable.
 
     Reads from a list of TeamRecord objects and renders
     a full standings display with W-L, PCT, GB, and streaks.
@@ -19,22 +25,23 @@ class StandingsTable(Widget):
         self,
         records: List[TeamRecord] | None = None,
         conference: str = "",
-        *,
-        name: str | None = None,
-        id: str | None = None,
-        classes: str | None = None,
+        **kwargs,
     ) -> None:
-        super().__init__(name=name, id=id, classes=classes)
+        super().__init__(**kwargs)
         self._records = records or []
         self._conference = conference
 
-    def render(self) -> str:
-        lines = []
-        header = (
-            f"{'#':>2} {'Team':<16} {'W':>3} {'L':>3} {'PCT':>6} {'GB':>5} "
-            f"{'Home':>6} {'Away':>6} {'Conf':>6} {'Div':>5} {'Strk':>5} {'L10':>5}"
-        )
-        lines.append(header)
+    def compose(self) -> ComposeResult:
+        table = DataTable(id="standings-dt")
+        table.add_columns("#", "Team", "W", "L", "PCT", "GB", "Strk")
+        yield table
+
+    def on_mount(self) -> None:
+        self._refresh_table()
+
+    def _refresh_table(self) -> None:
+        table = self.query_one("#standings-dt", DataTable)
+        table.clear()
 
         sorted_records = sorted(self._records, key=lambda r: r.win_pct, reverse=True)
         leader_wins = sorted_records[0].wins if sorted_records else 0
@@ -50,18 +57,24 @@ class StandingsTable(Widget):
                 if rec.streak < 0
                 else "-"
             )
-            lines.append(
-                f"{i:>2} {rec.team_name:<16} {rec.wins:>3} {rec.losses:>3} "
-                f"{rec.win_pct:>6.3f} {gb_str:>5} "
-                f"{rec.home_wins}-{rec.home_losses:>5} "
-                f"{rec.away_wins}-{rec.away_losses:>5} "
-                f"{rec.conference_wins}-{rec.conference_losses:>5} "
-                f"{rec.division_wins}-{rec.division_losses:>4} "
-                f"{streak_str:>5} "
-                f"{rec.last_10_wins}-{rec.last_10_losses:>4}"
+            table.add_row(
+                str(i),
+                rec.team_name[:16],
+                str(rec.wins),
+                str(rec.losses),
+                f"{rec.win_pct:.3f}",
+                gb_str,
+                streak_str,
             )
-        return "\n".join(lines)
 
     def update_records(self, records: List[TeamRecord]) -> None:
-        """Update the standings with new records."""
+        """Update standings with new records."""
         self._records = records
+        try:
+            self._refresh_table()
+        except Exception:
+            pass
+
+
+# Backward-compatible alias
+StandingsTable = StandingsTableWidget

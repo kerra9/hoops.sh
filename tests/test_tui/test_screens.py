@@ -136,3 +136,43 @@ def test_app_import():
     app = HoopsApp()
     assert app is not None
     assert app.TITLE == "hoops.sh"
+
+
+def test_help_screen_import():
+    """HelpScreen can be imported."""
+    from hoops_sim.tui.screens.help import HelpScreen
+
+    screen = HelpScreen()
+    assert screen is not None
+
+
+def test_messages_import():
+    """Custom messages can be imported."""
+    from hoops_sim.tui.messages import (
+        SimCourtUpdate,
+        SimGameOver,
+        SimNarration,
+        SimSpeedChanged,
+        SimTick,
+    )
+
+    tick = SimTick(home_score=10, away_score=5)
+    assert tick.home_score == 10
+    assert tick.away_score == 5
+
+
+def test_workers_import():
+    """SimulationWorker can be imported."""
+    from hoops_sim.tui.workers import SimulationWorker
+
+    assert SimulationWorker is not None
+
+
+def test_base_compat():
+    """Base module re-exports Textual classes."""
+    from hoops_sim.tui.base import App, Screen, Widget, strip_markup
+
+    assert App is not None
+    assert Screen is not None
+    assert Widget is not None
+    assert strip_markup("[bold]test[/]") == "test"

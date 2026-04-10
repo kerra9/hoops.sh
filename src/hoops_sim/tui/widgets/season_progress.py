@@ -1,38 +1,37 @@
-"""Season progress bar showing games played."""
+"""Season progress bar widget.
+
+Textual widget for showing season completion percentage.
+"""
 
 from __future__ import annotations
 
-from hoops_sim.tui.base import Widget
-from hoops_sim.tui.theme import ACCENT_SUCCESS
+from rich.text import Text
+from textual.widget import Widget
+
+from hoops_sim.tui.theme import ACCENT_PRIMARY
 
 
 class SeasonProgressBar(Widget):
-    """Games played progress bar."""
+    """Season progress bar."""
 
     def __init__(
         self,
         games_played: int = 0,
         total_games: int = 82,
-        *,
-        name: str | None = None,
-        id: str | None = None,
-        classes: str | None = None,
+        **kwargs,
     ) -> None:
-        super().__init__(name=name, id=id, classes=classes)
-        self._games_played = games_played
-        self._total_games = max(1, total_games)
+        super().__init__(**kwargs)
+        self._played = games_played
+        self._total = total_games
 
-    def render(self) -> str:
-        pct = self._games_played / self._total_games
-        bar_w = int(pct * 20)
-        filled = "\u2588" * bar_w
-        empty = "\u2591" * (20 - bar_w)
-        return (
-            f"  [{ACCENT_SUCCESS}]{filled}[/]{empty} {pct:.0%}\n"
-            f"  {self._games_played} / {self._total_games} games played"
-        )
+    def render(self) -> Text:
+        pct = self._played / self._total if self._total > 0 else 0.0
+        bar_len = 20
+        filled = int(pct * bar_len)
+        bar = "\u2588" * filled + "\u2591" * (bar_len - filled)
 
-    def update_progress(self, games_played: int, total_games: int = 82) -> None:
-        """Update progress bar."""
-        self._games_played = games_played
-        self._total_games = max(1, total_games)
+        text = Text()
+        text.append("Season Progress  ")
+        text.append(bar, style=ACCENT_PRIMARY)
+        text.append(f"  {self._played}/{self._total} ({pct:.0%})")
+        return text

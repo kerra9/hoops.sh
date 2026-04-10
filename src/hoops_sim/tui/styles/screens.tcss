@@ -1,17 +1,15 @@
 /* Screen-specific layout styles */
 
-/* ── Main Menu ──────────────────────────────────────────── */
+/* Main Menu */
 #main-menu {
     align: center middle;
     width: 100%;
     height: 100%;
 }
 
-#main-menu-title {
+#main-menu-banner {
     text-align: center;
     width: 100%;
-    color: $success;
-    text-style: bold;
     margin-bottom: 1;
 }
 
@@ -26,192 +24,204 @@
     align: center middle;
     width: auto;
     height: auto;
-    layout: vertical;
+    layout: horizontal;
 }
 
 #main-menu-buttons Button {
-    width: 40;
-    margin: 1 0;
+    width: 20;
+    margin: 0 1;
 }
 
-#main-menu-hotkeys {
-    width: 52;
-    height: auto;
-    layout: grid;
-    grid-size: 2;
-    grid-gutter: 1;
-    margin-top: 1;
-}
-
-#main-menu-hotkeys Button {
-    width: 24;
-}
-
-.recent-save-panel {
-    width: 52;
-    height: auto;
-    border: tall $primary;
-    padding: 1;
-    margin-top: 1;
-}
-
-/* ── League Hub ─────────────────────────────────────────── */
+/* League Hub */
 #league-hub {
     layout: vertical;
-    height: 100%;
+    overflow-y: auto;
+    padding: 1 2;
 }
 
 #league-hub-header {
     height: 3;
-    dock: top;
-    background: $primary-background;
-    color: $text;
-    text-align: center;
-    padding: 1;
     text-style: bold;
+    text-align: center;
+    width: 100%;
 }
 
-#league-hub-nav {
-    layout: horizontal;
-    height: auto;
-    align: center middle;
-    margin: 1 0;
-}
-
-#league-hub-nav Button {
-    margin: 0 1;
-}
-
-#league-hub-info {
-    layout: vertical;
-    height: auto;
-    margin: 1 2;
-    padding: 1;
-    border: tall $primary;
-}
-
-#league-hub-grid {
+#league-hub-body {
     layout: grid;
     grid-size: 2;
     grid-gutter: 1;
     height: 1fr;
-    padding: 0 1;
 }
 
-#league-hub-grid > * {
-    border: tall $primary;
-    padding: 1;
+#league-hub-left {
+    width: 1fr;
 }
 
-/* ── Season Setup ───────────────────────────────────────── */
+#league-hub-right {
+    width: 1fr;
+}
+
+/* Season Setup */
 #season-setup {
     align: center middle;
     width: 100%;
     height: 100%;
+    padding: 2;
 }
 
 #season-setup-form {
     width: 60;
     height: auto;
     border: tall $primary;
-    padding: 1 2;
+    padding: 2;
 }
 
-/* ── Settings ───────────────────────────────────────────── */
-#settings-screen {
+/* Live Game */
+#live-game {
+    layout: vertical;
+    height: 100%;
+}
+
+#live-game-scoreboard {
+    dock: top;
+    height: 3;
+}
+
+#live-game-body {
+    layout: horizontal;
+    height: 1fr;
+}
+
+#live-game-court {
+    width: 40;
+    height: 100%;
+}
+
+#live-game-pbp {
+    width: 1fr;
+    height: 100%;
+    border-left: tall $primary;
+}
+
+#live-game-context {
+    dock: bottom;
+    height: 3;
+}
+
+#live-game-minibox {
+    dock: bottom;
+    height: auto;
+    max-height: 12;
+}
+
+/* Box Score */
+#box-score {
+    layout: vertical;
+    padding: 1 2;
+    overflow-y: auto;
+}
+
+/* Team Dashboard */
+#team-dashboard {
+    layout: vertical;
+    padding: 1 2;
+    overflow-y: auto;
+}
+
+#team-dashboard-body {
+    layout: grid;
+    grid-size: 2;
+    grid-gutter: 1;
+    height: 1fr;
+}
+
+/* Standings */
+#standings {
+    layout: vertical;
+    padding: 1 2;
+    overflow-y: auto;
+}
+
+/* Schedule */
+#schedule-screen {
+    layout: vertical;
+    padding: 1 2;
+    overflow-y: auto;
+}
+
+/* Player Card */
+#player-card {
+    layout: vertical;
+    padding: 1 2;
+    overflow-y: auto;
+}
+
+#player-card-header {
+    height: auto;
+    margin-bottom: 1;
+}
+
+#player-card-body {
+    layout: grid;
+    grid-size: 2;
+    grid-gutter: 1;
+    height: 1fr;
+}
+
+/* Post Game */
+#post-game {
     align: center middle;
+    width: 100%;
+    height: 100%;
+    padding: 2;
+}
+
+#post-game-content {
+    width: 70;
+    height: auto;
+    border: tall $primary;
+    padding: 2;
+}
+
+/* Settings */
+#settings {
+    align: center middle;
+    width: 100%;
+    height: 100%;
+    padding: 2;
 }
 
 #settings-form {
     width: 60;
     height: auto;
     border: tall $primary;
-    padding: 1 2;
+    padding: 2;
 }
 
-/* ── Standings ──────────────────────────────────────────── */
-#standings-screen {
-    layout: vertical;
-    height: 100%;
-}
-
-/* ── Schedule ───────────────────────────────────────────── */
-#schedule-screen {
-    layout: vertical;
-    height: 100%;
-}
-
-/* ── Roster Management ──────────────────────────────────── */
+/* Roster Management */
 #roster-mgmt {
     layout: vertical;
-    height: 100%;
+    padding: 1 2;
+    overflow-y: auto;
 }
 
-/* ── Live Game ──────────────────────────────────────────── */
-#live-game {
+/* Sim Results */
+#sim-results {
     layout: vertical;
-    height: 100%;
+    padding: 1 2;
+    overflow-y: auto;
 }
 
-#live-game-top {
-    layout: horizontal;
-    height: 3;
-    dock: top;
-}
-
-#live-game-middle {
-    layout: horizontal;
-    height: 1fr;
-}
-
-#live-game-court-panel {
-    width: 38;
-    border: tall $primary;
-    padding: 0;
-}
-
-#live-game-play-by-play {
-    width: 1fr;
-    border: tall $primary;
-    padding: 0 1;
-}
-
-#live-game-stats {
-    width: 1fr;
-}
-
-#live-game-bottom {
-    layout: vertical;
-    height: 5;
-    dock: bottom;
-    padding: 0 1;
-}
-
-#live-game-controls {
-    width: auto;
-    layout: horizontal;
-    align: right middle;
-}
-
-/* ── Box Score ──────────────────────────────────────────── */
-#box-score-screen {
-    layout: vertical;
-    height: 100%;
-}
-
-#box-score-tabs {
-    dock: top;
-    height: 3;
-}
-
-/* ── Post-Game / Sim Results ────────────────────────────── */
-#post-game-screen {
-    layout: vertical;
-    height: 100%;
+/* Help Screen */
+HelpScreen {
     align: center middle;
 }
 
-#sim-results-screen {
-    layout: vertical;
-    height: 100%;
+#help-dialog {
+    width: 60;
+    height: auto;
+    max-height: 80%;
+    border: tall $primary;
+    padding: 2;
+    background: $surface;
 }

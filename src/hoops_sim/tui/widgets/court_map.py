@@ -1,15 +1,17 @@
 """ASCII half-court renderer with player positions, ball, and zones.
 
-The crown jewel widget: renders a half-court using box-drawing and
-Unicode characters with player positions from CourtState.
+Textual widget using Rich Text for colored rendering of the court,
+player markers, and ball carrier highlighting.
 """
 
 from __future__ import annotations
 
 from typing import List, Optional, Tuple
 
-from hoops_sim.tui.base import Widget
-from hoops_sim.tui.theme import COURT_LINES, HOT_ZONE, NEUTRAL_ZONE, PAINT
+from rich.text import Text
+from textual.widget import Widget
+
+from hoops_sim.tui.theme import COURT_LINES, PAINT
 
 # Half-court dimensions in characters
 COURT_W = 34
@@ -50,32 +52,28 @@ def _court_pos_to_char(
 class CourtMap(Widget):
     """ASCII half-court with player positions, ball, and zones.
 
-    Updates every tick from CourtState player positions.
+    Textual widget that renders a half-court using Rich Text for
+    color-coded player markers and court elements.
     """
 
-    def __init__(
-        self,
-        *,
-        name: str | None = None,
-        id: str | None = None,
-        classes: str | None = None,
-    ) -> None:
-        super().__init__(name=name, id=id, classes=classes)
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
         self._offense: List[Tuple[float, float]] = []
         self._defense: List[Tuple[float, float]] = []
         self._ball_carrier: Optional[int] = None
         self._ball_pos: Optional[Tuple[float, float]] = None
-        self.tick_counter = 0
 
-    def render(self) -> str:
-        """Render the full court with players."""
+    def render(self) -> Text:
+        """Render the full court with players as Rich Text."""
         grid = [list(line.ljust(38)) for line in _BLANK_COURT]
 
+        # Place defensive players
         for dx, dy in self._defense:
             row, col = _court_pos_to_char(dx, dy)
             if 0 <= row < len(grid) and 0 <= col < len(grid[row]):
                 grid[row][col] = "x"
 
+        # Place offensive players
         for i, (ox, oy) in enumerate(self._offense):
             row, col = _court_pos_to_char(ox, oy)
             if 0 <= row < len(grid) and 0 <= col < len(grid[row]):
@@ -88,7 +86,14 @@ class CourtMap(Widget):
                 else:
                     grid[row][col] = str(i + 1)
 
-        return "\n".join("".join(row) for row in grid)
+        # Build Rich Text with coloring
+        text = Text()
+        for row_idx, row in enumerate(grid):
+            line = "".join(row)
+            if row_idx > 0:
+                text.append("\n")
+            text.append(line, style="bold #c4873b")
+        return text
 
     def update_positions(
         self,
@@ -97,10 +102,11 @@ class CourtMap(Widget):
         ball_carrier: int | None = None,
         ball_pos: Tuple[float, float] | None = None,
     ) -> None:
-        """Update player positions and re-render the court."""
+        """Update player positions and trigger re-render."""
         if offense is not None:
             self._offense = offense
         if defense is not None:
             self._defense = defense
         self._ball_carrier = ball_carrier
         self._ball_pos = ball_pos
+        self.refresh()

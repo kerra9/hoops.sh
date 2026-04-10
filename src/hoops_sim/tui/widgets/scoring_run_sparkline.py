@@ -1,35 +1,31 @@
-"""Scoring run sparkline for visualizing momentum shifts."""
+"""Scoring run sparkline widget.
+
+Textual widget for displaying recent scoring runs.
+"""
 
 from __future__ import annotations
 
-from typing import List
-
-from hoops_sim.tui.base import Widget
-from hoops_sim.tui.widgets.career_sparkline import sparkline
+from rich.text import Text
+from textual.widget import Widget
 
 
 class ScoringRunSparkline(Widget):
-    """Sparkline showing scoring run trends during a game."""
+    """Mini sparkline showing recent scoring runs."""
 
-    def __init__(
-        self,
-        label: str = "Scoring Runs",
-        runs: List[float] | None = None,
-        color: str = "#ffd700",
-        *,
-        name: str | None = None,
-        id: str | None = None,
-        classes: str | None = None,
-    ) -> None:
-        super().__init__(name=name, id=id, classes=classes)
-        self._label = label
+    def __init__(self, runs: list[int] | None = None, **kwargs) -> None:
+        super().__init__(**kwargs)
         self._runs = runs or []
-        self._color = color
 
-    def render(self) -> str:
-        spark = sparkline(self._runs)
-        return f"{self._label}: [{self._color}]{spark}[/]"
-
-    def update_runs(self, runs: List[float]) -> None:
-        """Update the scoring run data."""
-        self._runs = runs
+    def render(self) -> Text:
+        text = Text()
+        text.append("Run: ")
+        if not self._runs:
+            text.append("--", style="dim")
+            return text
+        blocks = "\u2581\u2582\u2583\u2584\u2585\u2586\u2587\u2588"
+        max_val = max(self._runs) if self._runs else 1
+        for val in self._runs[-10:]:
+            idx = int(val / max_val * 7) if max_val > 0 else 0
+            idx = max(0, min(7, idx))
+            text.append(blocks[idx])
+        return text

@@ -1,39 +1,43 @@
-"""Text-based radar/spider chart for the 7 attribute categories."""
+"""Attribute radar/spider chart using text-based visualization.
+
+Textual widget for displaying player attribute categories as bars.
+"""
 
 from __future__ import annotations
 
-from hoops_sim.tui.base import Widget
+from typing import Dict
+
+from rich.text import Text
+from textual.widget import Widget
+
 from hoops_sim.tui.theme import rating_color
 
 
 class AttributeRadar(Widget):
-    """Text-based display of all 7 attribute category averages.
+    """Attribute category overview as horizontal bars.
 
-    Shows a horizontal bar chart summarizing each category with
-    color gradient based on rating value.
+    Displays each attribute category (Shooting, Finishing, etc.)
+    as a labeled bar with color based on rating value.
     """
 
     def __init__(
         self,
-        categories: dict[str, int] | None = None,
-        *,
-        name: str | None = None,
-        id: str | None = None,
-        classes: str | None = None,
+        categories: Dict[str, float] | None = None,
+        **kwargs,
     ) -> None:
-        super().__init__(name=name, id=id, classes=classes)
+        super().__init__(**kwargs)
         self._categories = categories or {}
 
-    def render(self) -> str:
-        lines = []
-        for cat_name, value in self._categories.items():
-            bar_w = value // 5
-            color = rating_color(value)
-            filled = "\u2588" * bar_w
-            empty = "\u2591" * (20 - bar_w)
-            lines.append(f"{cat_name:<14} [{color}]{filled}[/]{empty} {value:>3}")
-        return "\n".join(lines)
-
-    def update_categories(self, categories: dict[str, int]) -> None:
-        """Update the radar chart data."""
-        self._categories = categories
+    def render(self) -> Text:
+        text = Text()
+        for name, value in self._categories.items():
+            int_val = int(value)
+            bar_len = 10
+            filled = int(int_val / 99 * bar_len)
+            filled = max(0, min(bar_len, filled))
+            color = rating_color(int_val)
+            bar = "\u2588" * filled + "\u2591" * (bar_len - filled)
+            text.append(f"  {name:<14} ")
+            text.append(bar, style=color)
+            text.append(f" {int_val:>2}\n")
+        return text

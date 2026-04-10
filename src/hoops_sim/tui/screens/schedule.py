@@ -1,12 +1,18 @@
-"""Schedule screen -- week calendar grid view of SeasonSchedule."""
+"""Schedule screen -- week calendar grid view of SeasonSchedule.
+
+Textual Screen with calendar widget and navigation.
+"""
 
 from __future__ import annotations
 
-from typing import Optional, Tuple
+from textual.app import ComposeResult
+from textual.binding import Binding
+from textual.containers import VerticalScroll
+from textual.screen import Screen
+from textual.widgets import Footer, Header, Static
 
 from hoops_sim.models.league import League
 from hoops_sim.season.schedule import SeasonSchedule
-from hoops_sim.tui.base import Screen
 from hoops_sim.tui.widgets.season_progress import SeasonProgressBar
 from hoops_sim.tui.widgets.week_calendar import WeekCalendarGrid
 
@@ -15,9 +21,10 @@ class ScheduleScreen(Screen):
     """Calendar view of the season schedule with week navigation."""
 
     BINDINGS = [
-        ("escape", "go_back", "Back"),
-        ("left_square_bracket", "prev_week", "Prev Week"),
-        ("right_square_bracket", "next_week", "Next Week"),
+        Binding("escape", "go_back", "Back", show=True),
+        Binding("b", "go_back", "Back"),
+        Binding("left_square_bracket", "prev_week", "Prev Week", show=True),
+        Binding("right_square_bracket", "next_week", "Next Week", show=True),
     ]
 
     def __init__(
@@ -36,34 +43,36 @@ class ScheduleScreen(Screen):
         )
         self._week_start = max(1, current_day - (current_day - 1) % 7)
 
-    def render(self) -> str:
-        lines = [
-            f"[bold]Season Schedule -- Day {self.current_day}[/]",
-            "  [bold][[/] Prev Week    [bold]][/] Next Week    [bold red][B][/] Back",
-            "",
-        ]
-
-        day_games = self._build_week_games()
-        wc = WeekCalendarGrid(
-            week_start=self._week_start,
-            current_day=self.current_day,
-            day_games=day_games,
-        )
-        lines.append(wc.render())
-        lines.append("")
-
-        games_played = sum(
-            1
-            for g in self.schedule.games
-            if g.played
-            and (
-                g.home_team_id == self.user_team_id
-                or g.away_team_id == self.user_team_id
+    def compose(self) -> ComposeResult:
+        yield Header()
+        with VerticalScroll(id="schedule-screen"):
+            yield Static(
+                f"[bold]Season Schedule -- Day {self.current_day}[/]",
+                markup=True,
             )
-        )
-        sp = SeasonProgressBar(games_played=games_played, total_games=82)
-        lines.append(sp.render())
-        return "\n".join(lines)
+            yield Static(
+                "  [[ ] Prev Week    [ ] ] Next Week    [B] Back",
+            )
+
+            day_games = self._build_week_games()
+            yield WeekCalendarGrid(
+                week_start=self._week_start,
+                current_day=self.current_day,
+                day_games=day_games,
+                id="week-calendar",
+            )
+
+            games_played = sum(
+                1
+                for g in self.schedule.games
+                if g.played
+                and (
+                    g.home_team_id == self.user_team_id
+                    or g.away_team_id == self.user_team_id
+                )
+            )
+            yield SeasonProgressBar(games_played=games_played, total_games=82)
+        yield Footer()
 
     def _build_week_games(self):
         day_games = {}
@@ -90,20 +99,23 @@ class ScheduleScreen(Screen):
                         day_games[day] = (ha, opp_name, None, None, is_home)
         return day_games
 
-    def handle_input(self, choice: str) -> None:
-        c = choice.strip().lower()
-        if c == "[":
-            self.action_prev_week()
-        elif c == "]":
-            self.action_next_week()
-        elif c == "b":
-            self.action_go_back()
-
     def action_prev_week(self) -> None:
         self._week_start = max(1, self._week_start - 7)
+        self._refresh_calendar()
 
     def action_next_week(self) -> None:
         self._week_start += 7
+        self._refresh_calendar()
+
+    def _refresh_calendar(self) -> None:
+        """Refresh the calendar widget with new week data."""
+        try:
+            cal = self.query_one("#week-calendar", WeekCalendarGrid)
+            cal._week_start = self._week_start
+            cal._day_games = self._build_week_games()
+            cal.refresh()
+        except Exception:
+            pass
 
     def action_go_back(self) -> None:
         self.app.pop_screen()

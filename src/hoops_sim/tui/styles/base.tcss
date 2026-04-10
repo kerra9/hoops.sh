@@ -55,3 +55,15 @@ Screen {
     color: $success;
     text-style: bold;
 }
+
+/* Centered container helper */
+.center-container {
+    align: center middle;
+    width: 100%;
+    height: 100%;
+}
+
+/* Scrollable content */
+.scrollable {
+    overflow-y: auto;
+}

@@ -1,37 +1,36 @@
-"""Stat leader display widget."""
+"""Leader board widget showing top performers.
+
+Textual widget for displaying stat leaders.
+"""
 
 from __future__ import annotations
 
 from typing import List, Tuple
 
-from hoops_sim.tui.base import Widget
+from rich.text import Text
+from textual.widget import Widget
 
 
 class LeaderBoard(Widget):
-    """Stat leader display showing top performers in a category."""
+    """Compact leader board for stat categories."""
 
     def __init__(
         self,
         title: str = "LEADERS",
         leaders: List[Tuple[str, str, str]] | None = None,
-        *,
-        name: str | None = None,
-        id: str | None = None,
-        classes: str | None = None,
+        **kwargs,
     ) -> None:
-        """Initialize with leader tuples of (stat_abbr, player_name, value_str)."""
-        super().__init__(name=name, id=id, classes=classes)
+        """Initialize with leaders as (stat, player_name, value)."""
+        super().__init__(**kwargs)
         self._title = title
         self._leaders = leaders or []
 
-    def render(self) -> str:
-        lines = [f"[bold]{self._title}[/]"]
-        for stat, player, value in self._leaders:
-            lines.append(f"  {stat}: {player} {value}")
+    def render(self) -> Text:
+        text = Text()
+        text.append(f"{self._title}\n", style="bold")
         if not self._leaders:
-            lines.append("  [dim]No stats yet[/]")
-        return "\n".join(lines)
-
-    def update_leaders(self, leaders: List[Tuple[str, str, str]]) -> None:
-        """Update the leader board."""
-        self._leaders = leaders
+            text.append("  No leaders yet", style="dim")
+            return text
+        for stat, name, value in self._leaders[:5]:
+            text.append(f"  {stat:<6} {name:<16} {value}\n")
+        return text

@@ -1,18 +1,30 @@
-"""Box Score screen -- tabbed traditional + advanced stats."""
+"""Box Score screen -- tabbed traditional + advanced stats.
+
+Textual Screen with DataTable widgets for sortable, scrollable stats.
+"""
 
 from __future__ import annotations
 
+from textual.app import ComposeResult
+from textual.binding import Binding
+from textual.containers import Vertical, VerticalScroll
+from textual.screen import Screen
+from textual.widgets import DataTable, Footer, Header, Static
+
 from hoops_sim.models.stats import TeamGameStats
-from hoops_sim.tui.base import Screen
 from hoops_sim.tui.theme import fg_pct_color
 from hoops_sim.tui.widgets.quarter_scoring import QuarterScoringTable
 
 
 class BoxScoreScreen(Screen):
-    """Traditional + advanced box score from PlayerGameStats / TeamGameStats."""
+    """Traditional + advanced box score from PlayerGameStats / TeamGameStats.
+
+    Uses DataTable widgets for sortable columns and proper scrolling.
+    """
 
     BINDINGS = [
-        ("escape", "go_back", "Back"),
+        Binding("escape", "go_back", "Back", show=True),
+        Binding("b", "go_back", "Back"),
     ]
 
     def __init__(
@@ -32,44 +44,39 @@ class BoxScoreScreen(Screen):
         self._home_quarters = home_quarters or []
         self._away_quarters = away_quarters or []
 
-    def render(self) -> str:
+    def compose(self) -> ComposeResult:
         home_total = sum(ps.points for ps in self._home_stats.player_stats.values())
         away_total = sum(ps.points for ps in self._away_stats.player_stats.values())
 
-        lines = [
-            f"[bold]Box Score -- {self._away_name} {away_total} vs {self._home_name} {home_total}[/]",
-            "",
-        ]
-
-        header = (
-            f"{'Player':<18} {'MIN':>3} {'PTS':>3} {'REB':>3} {'AST':>3} "
-            f"{'STL':>3} {'BLK':>3} {'FGM-A':>6} {'FG%':>6} {'3PM-A':>6} "
-            f"{'FTM-A':>6} {'TO':>3} {'+/-':>4}"
-        )
-
-        lines.append(f"\n[bold]{self._away_name}[/]")
-        lines.append(header)
-        lines.extend(self._render_team(self._away_stats))
-
-        lines.append(f"\n[bold]{self._home_name}[/]")
-        lines.append(header)
-        lines.extend(self._render_team(self._home_stats))
-
-        if self._home_quarters or self._away_quarters:
-            lines.append("")
-            qt = QuarterScoringTable(
-                home_name=self._home_name,
-                away_name=self._away_name,
-                home_quarters=self._home_quarters,
-                away_quarters=self._away_quarters,
+        yield Header()
+        with VerticalScroll(id="box-score"):
+            yield Static(
+                f"[bold]Box Score -- {self._away_name} {away_total} vs "
+                f"{self._home_name} {home_total}[/]",
+                markup=True,
             )
-            lines.append(qt.render())
 
-        lines.append("\n  [bold red][B][/] Back")
-        return "\n".join(lines)
+            yield Static(f"\n[bold]{self._away_name}[/]", markup=True)
+            yield self._build_table(self._away_stats, "away-table")
 
-    def _render_team(self, team_stats: TeamGameStats) -> list[str]:
-        rows = []
+            yield Static(f"\n[bold]{self._home_name}[/]", markup=True)
+            yield self._build_table(self._home_stats, "home-table")
+
+            if self._home_quarters or self._away_quarters:
+                yield QuarterScoringTable(
+                    home_name=self._home_name,
+                    away_name=self._away_name,
+                    home_quarters=self._home_quarters,
+                    away_quarters=self._away_quarters,
+                )
+        yield Footer()
+
+    def _build_table(self, team_stats: TeamGameStats, table_id: str) -> DataTable:
+        table = DataTable(id=table_id, classes="box-score-table")
+        table.add_columns(
+            "Player", "MIN", "PTS", "REB", "AST", "STL", "BLK",
+            "FGM-A", "FG%", "3PM-A", "FTM-A", "TO", "+/-",
+        )
         for ps in sorted(
             team_stats.player_stats.values(),
             key=lambda s: s.minutes,
@@ -77,28 +84,25 @@ class BoxScoreScreen(Screen):
         ):
             pm_str = f"+{ps.plus_minus}" if ps.plus_minus > 0 else str(ps.plus_minus)
             fg_pct = ps.fgm / ps.fga if ps.fga > 0 else 0.0
-            fg_color = fg_pct_color(fg_pct)
-            fg_pct_str = f"[{fg_color}]{fg_pct:.3f}[/]" if ps.fga > 0 else "-"
-
+            fg_pct_str = f"{fg_pct:.3f}" if ps.fga > 0 else "-"
             name_str = ps.player_name[:18]
-            if ps.is_triple_double():
-                name_str = f"[bold #9b59b6]{name_str}[/]"
-            elif ps.is_double_double():
-                name_str = f"[bold]{name_str}[/]"
 
-            rows.append(
-                f"{name_str:<18} {ps.minutes:>3.0f} {ps.points:>3} {ps.rebounds:>3} "
-                f"{ps.assists:>3} {ps.steals:>3} {ps.blocks:>3} "
-                f"{ps.fgm}-{ps.fga:>5} {fg_pct_str:>6} "
-                f"{ps.three_pm}-{ps.three_pa:>5} {ps.ftm}-{ps.fta:>5} "
-                f"{ps.turnovers:>3} {pm_str:>4}"
+            table.add_row(
+                name_str,
+                f"{ps.minutes:.0f}",
+                str(ps.points),
+                str(ps.rebounds),
+                str(ps.assists),
+                str(ps.steals),
+                str(ps.blocks),
+                f"{ps.fgm}-{ps.fga}",
+                fg_pct_str,
+                f"{ps.three_pm}-{ps.three_pa}",
+                f"{ps.ftm}-{ps.fta}",
+                str(ps.turnovers),
+                pm_str,
             )
-        return rows
-
-    def handle_input(self, choice: str) -> None:
-        c = choice.strip().lower()
-        if c == "b":
-            self.action_go_back()
+        return table
 
     def action_go_back(self) -> None:
         self.app.pop_screen()

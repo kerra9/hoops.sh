@@ -1,14 +1,19 @@
 """Main menu screen -- entry point for the TUI.
 
-Redesigned with figlet-style banner, hotkey grid, and recent save panel.
+Textual Screen with compose() yielding Button widgets and a gradient banner.
 """
 
 from __future__ import annotations
 
-from hoops_sim.tui.base import Screen
+from textual.app import ComposeResult
+from textual.binding import Binding
+from textual.containers import Center, Horizontal, Vertical
+from textual.screen import Screen
+from textual.widgets import Button, Footer, Header, Static
+
 from hoops_sim.tui.theme import BANNER_GRADIENT
 
-# Figlet-style banner with gradient coloring
+# Figlet-style banner
 _BANNER = r"""
  _                            _
 | |__   ___   ___  _ __  ___ | |
@@ -20,7 +25,7 @@ _BANNER = r"""
 
 
 def _gradient_banner() -> str:
-    """Apply gradient coloring to the banner text."""
+    """Apply gradient coloring to the banner text using Rich markup."""
     lines = _BANNER.strip().split("\n")
     colored_lines = []
     for i, line in enumerate(lines):
@@ -34,37 +39,43 @@ class MainMenuScreen(Screen):
 
     Features:
     - Gradient-colored figlet banner
-    - Hotkey grid instead of stacked buttons
-    - Keyboard-first navigation
+    - Button widgets in a horizontal layout
+    - Keyboard-first navigation with proper action handlers
     """
 
     BINDINGS = [
-        ("n", "new_season", "New Season"),
-        ("g", "quick_game", "Quick Game"),
-        ("s", "settings", "Settings"),
-        ("q", "quit", "Quit"),
+        Binding("n", "new_season", "New Season", show=True),
+        Binding("g", "quick_game", "Quick Game", show=True),
+        Binding("s", "settings", "Settings", show=True),
+        Binding("q", "quit_app", "Quit", show=True),
     ]
 
-    def render(self) -> str:
-        return (
-            f"{_gradient_banner()}\n"
-            "Maximum Fidelity Basketball Simulator\n\n"
-            "  [bold green][N][/] New Season    "
-            "[bold blue][G][/] Quick Game\n"
-            "  [bold yellow][S][/] Settings      "
-            "[bold red][Q][/] Quit\n"
-        )
+    def compose(self) -> ComposeResult:
+        yield Header()
+        with Center():
+            with Vertical(id="main-menu"):
+                yield Static(_gradient_banner(), id="main-menu-banner", markup=True)
+                yield Static(
+                    "[dim]Maximum Fidelity Basketball Simulator[/]",
+                    id="main-menu-subtitle",
+                    markup=True,
+                )
+                with Horizontal(id="main-menu-buttons"):
+                    yield Button("New Season", variant="success", id="btn-new-season")
+                    yield Button("Quick Game", variant="primary", id="btn-quick-game")
+                    yield Button("Settings", variant="warning", id="btn-settings")
+                    yield Button("Quit", variant="error", id="btn-quit")
+        yield Footer()
 
-    def handle_input(self, choice: str) -> None:
-        c = choice.strip().lower()
-        if c == "n":
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "btn-new-season":
             self.action_new_season()
-        elif c == "g":
+        elif event.button.id == "btn-quick-game":
             self.action_quick_game()
-        elif c == "s":
+        elif event.button.id == "btn-settings":
             self.action_settings()
-        elif c == "q":
-            self.action_quit()
+        elif event.button.id == "btn-quit":
+            self.action_quit_app()
 
     def action_new_season(self) -> None:
         from hoops_sim.tui.screens.season_setup import SeasonSetupScreen
@@ -91,5 +102,5 @@ class MainMenuScreen(Screen):
 
         self.app.push_screen(SettingsScreen())
 
-    def action_quit(self) -> None:
+    def action_quit_app(self) -> None:
         self.app.exit()

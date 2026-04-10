@@ -1,8 +1,15 @@
-"""New Season Setup screen -- pick seed, team count, user team."""
+"""New Season Setup screen -- pick seed, team count, user team.
+
+Textual Screen with Input, Select, and Button widgets.
+"""
 
 from __future__ import annotations
 
-from hoops_sim.tui.base import Screen
+from textual.app import ComposeResult
+from textual.binding import Binding
+from textual.containers import Center, Vertical
+from textual.screen import Screen
+from textual.widgets import Button, Footer, Header, Input, Label, Select, Static
 
 
 class SeasonSetupScreen(Screen):
@@ -12,34 +19,31 @@ class SeasonSetupScreen(Screen):
     """
 
     BINDINGS = [
-        ("escape", "go_back", "Back"),
+        Binding("escape", "go_back", "Back", show=True),
     ]
 
-    def __init__(self) -> None:
-        super().__init__()
-        self._seed = 42
-        self._num_teams = 30
+    def compose(self) -> ComposeResult:
+        yield Header()
+        with Center():
+            with Vertical(id="season-setup-form"):
+                yield Static("[bold]New Season Setup[/]", markup=True)
+                yield Label("Seed:")
+                yield Input(value="42", id="seed-input", type="integer")
+                yield Label("Number of Teams:")
+                yield Select(
+                    [(str(n), n) for n in [6, 10, 16, 20, 24, 30]],
+                    value=30,
+                    id="team-count-select",
+                )
+                yield Button("Generate League & Start", variant="success", id="btn-start")
+                yield Button("Back", variant="error", id="btn-back")
+        yield Footer()
 
-    def render(self) -> str:
-        return (
-            "[bold]New Season Setup[/]\n\n"
-            f"  Seed: {self._seed}\n"
-            f"  Number of Teams: {self._num_teams}\n"
-            f"  Options: 6, 10, 16, 20, 24, 30\n\n"
-            "  [bold green][G][/] Generate League & Start\n"
-            "  [bold red][B][/] Back\n"
-        )
-
-    def handle_input(self, choice: str) -> None:
-        c = choice.strip().lower()
-        if c == "g":
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "btn-start":
             self._start_season()
-        elif c == "b":
+        elif event.button.id == "btn-back":
             self.action_go_back()
-        elif c.isdigit():
-            val = int(c)
-            if val in (6, 10, 16, 20, 24, 30):
-                self._num_teams = val
 
     def _start_season(self) -> None:
         """Generate the league and switch to the League Hub."""
@@ -49,10 +53,22 @@ class SeasonSetupScreen(Screen):
         from hoops_sim.tui.screens.league_hub import LeagueHubScreen
         from hoops_sim.utils.rng import SeededRNG
 
-        # Generation happens synchronously
+        try:
+            seed_val = int(self.query_one("#seed-input", Input).value)
+        except (ValueError, Exception):
+            seed_val = 42
 
-        rng = SeededRNG(seed=self._seed)
-        league = generate_league(num_teams=self._num_teams, rng=rng)
+        try:
+            num_teams = self.query_one("#team-count-select", Select).value
+            if num_teams is None or num_teams == Select.BLANK:
+                num_teams = 30
+        except Exception:
+            num_teams = 30
+
+        self.app.notify(f"Generating league with {num_teams} teams...")
+
+        rng = SeededRNG(seed=seed_val)
+        league = generate_league(num_teams=num_teams, rng=rng)
 
         team_ids = [t.id for t in league.teams]
         schedule = generate_schedule(team_ids, games_per_team=82, rng=rng)
@@ -66,7 +82,7 @@ class SeasonSetupScreen(Screen):
                 league=league,
                 schedule=schedule,
                 standings=standings,
-                seed=self._seed,
+                seed=seed_val,
             )
         )
 

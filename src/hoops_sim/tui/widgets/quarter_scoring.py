@@ -1,41 +1,53 @@
-"""Quarter-by-quarter scoring breakdown table."""
+"""Quarter-by-quarter scoring breakdown.
+
+Textual widget for displaying scoring by quarter.
+"""
 
 from __future__ import annotations
 
-from typing import List
-
-from hoops_sim.tui.base import Widget
+from rich.text import Text
+from textual.widget import Widget
 
 
 class QuarterScoringTable(Widget):
-    """Quarter-by-quarter scoring breakdown."""
+    """Quarter scoring summary."""
 
     def __init__(
         self,
-        home_name: str = "HOME",
-        away_name: str = "AWAY",
-        home_quarters: List[int] | None = None,
-        away_quarters: List[int] | None = None,
-        *,
-        name: str | None = None,
-        id: str | None = None,
-        classes: str | None = None,
+        home_name: str = "Home",
+        away_name: str = "Away",
+        home_quarters: list[int] | None = None,
+        away_quarters: list[int] | None = None,
+        **kwargs,
     ) -> None:
-        super().__init__(name=name, id=id, classes=classes)
+        super().__init__(**kwargs)
         self._home_name = home_name
         self._away_name = away_name
-        self._home_q = home_quarters or [0, 0, 0, 0]
-        self._away_q = away_quarters or [0, 0, 0, 0]
+        self._home_quarters = home_quarters or []
+        self._away_quarters = away_quarters or []
 
-    def render(self) -> str:
-        q_headers = "  ".join(f"Q{i+1}" for i in range(len(self._home_q)))
-        home_total = sum(self._home_q)
-        away_total = sum(self._away_q)
-        away_scores = "  ".join(f"{q:>2}" for q in self._away_q)
-        home_scores = "  ".join(f"{q:>2}" for q in self._home_q)
-        return (
-            f"[bold]QUARTER SCORING[/]\n"
-            f"  {'':>12}  {q_headers}  TOTAL\n"
-            f"  {self._away_name:>12}  {away_scores}  {away_total:>5}\n"
-            f"  {self._home_name:>12}  {home_scores}  {home_total:>5}"
-        )
+    def render(self) -> Text:
+        text = Text()
+        num_q = max(len(self._home_quarters), len(self._away_quarters), 4)
+
+        # Header
+        text.append(f"{'Team':<16}", style="bold")
+        for i in range(num_q):
+            label = f"Q{i + 1}" if i < 4 else f"OT{i - 3}"
+            text.append(f" {label:>4}")
+        text.append(f" {'TOT':>4}\n", style="bold")
+
+        # Away
+        text.append(f"{self._away_name:<16}")
+        for i in range(num_q):
+            val = self._away_quarters[i] if i < len(self._away_quarters) else 0
+            text.append(f" {val:>4}")
+        text.append(f" {sum(self._away_quarters):>4}\n")
+
+        # Home
+        text.append(f"{self._home_name:<16}")
+        for i in range(num_q):
+            val = self._home_quarters[i] if i < len(self._home_quarters) else 0
+            text.append(f" {val:>4}")
+        text.append(f" {sum(self._home_quarters):>4}")
+        return text

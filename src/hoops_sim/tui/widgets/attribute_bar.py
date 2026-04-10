@@ -1,34 +1,40 @@
-"""Horizontal attribute bar 0-99 with color gradient."""
+"""Horizontal attribute bar using Unicode block characters.
+
+Textual widget for displaying player attribute values.
+"""
 
 from __future__ import annotations
 
-from hoops_sim.tui.base import Widget
+from rich.text import Text
+from textual.widget import Widget
+
 from hoops_sim.tui.theme import rating_color
 
 
 class AttributeBar(Widget):
-    """Horizontal bar displaying a 0-99 attribute rating with color gradient."""
+    """Horizontal bar using Unicode block characters with color gradient."""
 
     def __init__(
         self,
-        label: str,
-        value: int = 50,
-        *,
-        name: str | None = None,
-        id: str | None = None,
-        classes: str | None = None,
+        label: str = "",
+        value: int = 0,
+        max_value: int = 99,
+        **kwargs,
     ) -> None:
-        super().__init__(name=name, id=id, classes=classes)
+        super().__init__(**kwargs)
         self._label = label
-        self.value = max(0, min(99, value))
+        self._value = value
+        self._max_value = max_value
 
-    def render(self) -> str:
-        bar_width = self.value // 5
-        color = rating_color(self.value)
-        filled = "\u2588" * bar_width
-        empty = "\u2591" * (20 - bar_width)
-        return f"{self._label:<14} [{color}]{filled}[/]{empty} {self.value:>3}"
+    def render(self) -> Text:
+        bar_len = 10
+        filled = int(self._value / self._max_value * bar_len)
+        filled = max(0, min(bar_len, filled))
+        color = rating_color(self._value)
+        bar = "\u2588" * filled + "\u2591" * (bar_len - filled)
 
-    def update_value(self, value: int) -> None:
-        """Update the displayed value."""
-        self.value = max(0, min(99, value))
+        text = Text()
+        text.append(f"{self._label:<14} ")
+        text.append(bar, style=color)
+        text.append(f" {self._value:>2}")
+        return text

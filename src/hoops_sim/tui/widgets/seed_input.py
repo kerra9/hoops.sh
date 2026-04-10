@@ -1,43 +1,30 @@
-"""Input widget for RNG seed with random-seed button."""
+"""Seed input widget.
+
+Textual widget wrapping Input for seed entry.
+"""
 
 from __future__ import annotations
 
-import random
-
-from hoops_sim.tui.base import Widget
+from textual.app import ComposeResult
+from textual.widget import Widget
+from textual.widgets import Input, Static
 
 
 class SeedInput(Widget):
-    """Input widget for RNG seed.
+    """Seed input with label."""
 
-    Allows users to enter a specific seed for reproducible simulations
-    or generate a random one.
-    """
+    def __init__(self, value: int = 42, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self._value = value
 
-    class SeedChanged:
-        """Posted when the seed value changes."""
-
-        def __init__(self, seed: int) -> None:
-            self.seed = seed
-
-    def __init__(
-        self,
-        initial_seed: int | None = None,
-        *,
-        name: str | None = None,
-        id: str | None = None,
-        classes: str | None = None,
-    ) -> None:
-        super().__init__(name=name, id=id, classes=classes)
-        self._seed = initial_seed if initial_seed is not None else random.randint(1, 999999)
+    def compose(self) -> ComposeResult:
+        yield Static("Seed:")
+        yield Input(value=str(self._value), id="seed-input", type="integer")
 
     @property
-    def seed(self) -> int:
-        return self._seed
-
-    def render(self) -> str:
-        return f"Seed: {self._seed}  [\U0001f3b2 Random]"
-
-    def randomize(self) -> None:
-        """Generate a new random seed."""
-        self._seed = random.randint(1, 999999)
+    def value(self) -> int:
+        try:
+            inp = self.query_one("#seed-input", Input)
+            return int(inp.value)
+        except (ValueError, Exception):
+            return 42
