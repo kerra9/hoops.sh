@@ -2,12 +2,9 @@
 
 from __future__ import annotations
 
-from typing import List, Tuple
+from typing import List
 
-from textual.app import ComposeResult
-from textual.widget import Widget
-from textual.widgets import Label
-
+from hoops_sim.tui.base import Widget
 from hoops_sim.tui.theme import PLAYOFF_IN, PLAYOFF_OUT, PLAYOFF_PLAYIN
 
 
@@ -15,14 +12,6 @@ class PlayoffPictureStrip(Widget):
     """Compact playoff seeding strip showing teams in/out.
 
     Seeds 1-8 in green, 9-10 play-in yellow, rest red.
-    """
-
-    DEFAULT_CSS = """
-    PlayoffPictureStrip {
-        height: 2;
-        width: 100%;
-        padding: 0 1;
-    }
     """
 
     def __init__(
@@ -53,9 +42,11 @@ class PlayoffPictureStrip(Widget):
                 parts.append("| ")
         return "".join(parts)
 
-    def compose(self) -> ComposeResult:
-        yield Label(self._format_conf("E", self._east))
-        yield Label(self._format_conf("W", self._west))
+    def render(self) -> str:
+        return (
+            self._format_conf("E", self._east) + "\n"
+            + self._format_conf("W", self._west)
+        )
 
     def update_picture(
         self, east_teams: List[str], west_teams: List[str]
@@ -63,4 +54,3 @@ class PlayoffPictureStrip(Widget):
         """Update the playoff picture."""
         self._east = east_teams
         self._west = west_teams
-        self.refresh(recompose=True)

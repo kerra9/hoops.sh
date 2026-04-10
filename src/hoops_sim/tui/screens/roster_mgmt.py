@@ -1,28 +1,14 @@
-"""Roster Management screen -- lineup ordering, starter/bench assignment.
-
-Redesigned with side-by-side starters vs bench, reorder support,
-and lineup fit score.
-"""
+"""Roster Management screen -- lineup ordering, starter/bench assignment."""
 
 from __future__ import annotations
 
-from textual.app import ComposeResult
-from textual.containers import Horizontal, Vertical
-from textual.screen import Screen
-from textual.widgets import Button, DataTable, Footer, Header, Label
-
 from hoops_sim.models.team import Team
+from hoops_sim.tui.base import Screen
 from hoops_sim.tui.theme import energy_color
 
 
 class RosterManagementScreen(Screen):
-    """Lineup ordering, starter/bench assignment.
-
-    Features:
-    - Side-by-side starters vs bench with visual separator
-    - Per-player energy bars
-    - Reorder support with up/down keys
-    """
+    """Lineup ordering, starter/bench assignment."""
 
     BINDINGS = [
         ("escape", "go_back", "Back"),
@@ -32,45 +18,21 @@ class RosterManagementScreen(Screen):
         super().__init__()
         self.team = team
 
-    def compose(self) -> ComposeResult:
-        yield Header()
-        with Vertical(id="roster-mgmt"):
-            yield Label(
-                f"[bold]{self.team.full_name} -- Roster Management[/]",
-                classes="screen-header",
-            )
-            yield Button("< Back", id="btn-back", classes="back-button")
+    def render(self) -> str:
+        lines = [
+            f"[bold]{self.team.full_name} -- Roster Management[/]",
+            "",
+        ]
 
-            with Horizontal():
-                # Left: Starters
-                with Vertical():
-                    yield Label(
-                        "[bold green]STARTERS[/]", classes="conference-header"
-                    )
-                    starters_table = DataTable(id="starters-table")
-                    starters_table.add_columns(
-                        "#", "Name", "Pos", "OVR", "Age", "Energy"
-                    )
-                    yield starters_table
-
-                # Right: Bench
-                with Vertical():
-                    yield Label(
-                        "[bold yellow]BENCH[/]", classes="conference-header"
-                    )
-                    bench_table = DataTable(id="bench-table")
-                    bench_table.add_columns(
-                        "#", "Name", "Pos", "OVR", "Age", "Energy"
-                    )
-                    yield bench_table
-        yield Footer()
-
-    def on_mount(self) -> None:
         starters = self.team.get_starters()
         starter_ids = {p.id for p in starters}
         bench = [p for p in self.team.roster if p.id not in starter_ids]
 
-        starters_table = self.query_one("#starters-table", DataTable)
+        header = f"{'#':>3} {'Name':<22} {'Pos':<4} {'OVR':>3} {'Age':>3} Energy"
+
+        # Starters
+        lines.append("[bold green]STARTERS[/]")
+        lines.append(header)
         for p in starters:
             e_pct = p.current_energy / 100.0
             e_color = energy_color(e_pct)
@@ -78,16 +40,16 @@ class RosterManagementScreen(Screen):
             filled = "\u2588" * e_bar
             empty = "\u2591" * (5 - e_bar)
             energy_str = f"[{e_color}]{filled}{empty}[/]"
-            starters_table.add_row(
-                str(p.jersey_number),
-                p.full_name,
-                p.position.value,
-                str(p.overall),
-                str(p.age),
-                energy_str,
+            lines.append(
+                f"{p.jersey_number:>3} {p.full_name:<22} {p.position.value:<4} "
+                f"{p.overall:>3} {p.age:>3} {energy_str}"
             )
 
-        bench_table = self.query_one("#bench-table", DataTable)
+        lines.append("")
+
+        # Bench
+        lines.append("[bold yellow]BENCH[/]")
+        lines.append(header)
         for p in sorted(bench, key=lambda x: x.overall, reverse=True):
             e_pct = p.current_energy / 100.0
             e_color = energy_color(e_pct)
@@ -95,17 +57,18 @@ class RosterManagementScreen(Screen):
             filled = "\u2588" * e_bar
             empty = "\u2591" * (5 - e_bar)
             energy_str = f"[{e_color}]{filled}{empty}[/]"
-            bench_table.add_row(
-                str(p.jersey_number),
-                p.full_name,
-                p.position.value,
-                str(p.overall),
-                str(p.age),
-                energy_str,
+            lines.append(
+                f"{p.jersey_number:>3} {p.full_name:<22} {p.position.value:<4} "
+                f"{p.overall:>3} {p.age:>3} {energy_str}"
             )
 
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "btn-back":
+        lines.append("")
+        lines.append("  [bold red][B][/] Back")
+        return "\n".join(lines)
+
+    def handle_input(self, choice: str) -> None:
+        c = choice.strip().lower()
+        if c == "b":
             self.action_go_back()
 
     def action_go_back(self) -> None:

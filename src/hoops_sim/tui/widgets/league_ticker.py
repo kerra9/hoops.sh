@@ -4,23 +4,11 @@ from __future__ import annotations
 
 from typing import List
 
-from textual.app import ComposeResult
-from textual.widget import Widget
-from textual.widgets import Label
+from hoops_sim.tui.base import Widget
 
 
 class LeagueTicker(Widget):
-    """Scrolling ticker of recent game results.
-
-    Shows completed game scores in a compact horizontal format.
-    """
-
-    DEFAULT_CSS = """
-    LeagueTicker {
-        height: auto;
-        width: 100%;
-    }
-    """
+    """Scrolling ticker of recent game results."""
 
     def __init__(
         self,
@@ -33,15 +21,15 @@ class LeagueTicker(Widget):
         super().__init__(name=name, id=id, classes=classes)
         self._results = results or []
 
-    def compose(self) -> ComposeResult:
-        yield Label("[bold]LEAGUE TICKER[/]")
+    def render(self) -> str:
+        lines = ["[bold]LEAGUE TICKER[/]"]
         if self._results:
             for result in self._results[:5]:
-                yield Label(f"  {result}")
+                lines.append(f"  {result}")
         else:
-            yield Label("  [dim]No recent games[/]")
+            lines.append("  [dim]No recent games[/]")
+        return "\n".join(lines)
 
     def update_results(self, results: List[str]) -> None:
         """Update the ticker results."""
         self._results = results
-        self.refresh(recompose=True)

@@ -2,18 +2,13 @@
 
 Broadcast-style layout with court map, enhanced play-by-play,
 broadcast scoreboard, context strip, and mini box scores.
-Powered by the real GameSimulator with reactive widget updates.
+Powered by the real GameSimulator with Rich-only rendering.
 """
 
 from __future__ import annotations
 
-import asyncio
+import time
 from typing import Optional
-
-from textual.app import ComposeResult
-from textual.containers import Horizontal, Vertical
-from textual.screen import Screen
-from textual.widgets import Footer, Header, Label
 
 from hoops_sim.engine.game import GamePhase, GameState
 from hoops_sim.engine.simulator import GameSimulator, SimEvent
@@ -25,6 +20,7 @@ from hoops_sim.narration.engine import NarrationEngine, NarrationEvent, Narratio
 from hoops_sim.psychology.momentum import MomentumTracker
 from hoops_sim.season.schedule import ScheduledGame, SeasonSchedule
 from hoops_sim.season.standings import Standings
+from hoops_sim.tui.base import Screen, console
 from hoops_sim.tui.widgets.broadcast_scoreboard import BroadcastScoreboard
 from hoops_sim.tui.widgets.context_strip import ContextStrip
 from hoops_sim.tui.widgets.court_map import CourtMap
@@ -34,15 +30,7 @@ from hoops_sim.utils.rng import SeededRNG
 
 
 class LiveGameScreen(Screen):
-    """The main event: real-time play-by-play simulation.
-
-    Broadcast-style layout with:
-    - Top: BroadcastScoreboard (quarter, clock, shot clock, scores)
-    - Middle: CourtMap | PlayByPlay | MiniBoxScores
-    - Bottom: ContextStrip (momentum, play, possession, fouls)
-
-    Uses reactive widget updates for 10Hz performance.
-    """
+    """The main event: real-time play-by-play simulation."""
 
     BINDINGS = [
         ("space", "toggle_pause", "Pause/Resume"),
@@ -74,10 +62,23 @@ class LiveGameScreen(Screen):
 
         # Simulation state
         self._paused = False
-        self._tick_delay = 0.1  # seconds between ticks
+        self._tick_delay = 0.1
         self._game_over = False
-        self._sim_task: Optional[asyncio.Task] = None  # type: ignore[type-arg]
         self._tick_count = 0
+
+        # Widgets
+        self._scoreboard = BroadcastScoreboard(
+            home_name=home_team.full_name if home_team else "Home",
+            away_name=away_team.full_name if away_team else "Away",
+            home_abbr=home_team.abbreviation if home_team else "HME",
+            away_abbr=away_team.abbreviation if away_team else "AWY",
+        )
+        self._court = CourtMap()
+        self._pbp = PlayByPlay()
+        self._context = ContextStrip(
+            home_name=home_team.full_name if home_team else "Home",
+            away_name=away_team.full_name if away_team else "Away",
+        )
 
         # Create the real GameSimulator
         if home_team and away_team:
@@ -102,131 +103,104 @@ class LiveGameScreen(Screen):
             self._game_state = GameState()
             self._momentum = MomentumTracker()
 
-    def compose(self) -> ComposeResult:
-        home_name = self._home_team.full_name if self._home_team else "Home"
-        away_name = self._away_team.full_name if self._away_team else "Away"
-        home_abbr = self._home_team.abbreviation if self._home_team else "HME"
-        away_abbr = self._away_team.abbreviation if self._away_team else "AWY"
-
-        yield Header()
-        with Vertical(id="live-game"):
-            # Top: Broadcast scoreboard strip
-            yield BroadcastScoreboard(
-                home_name=home_name,
-                away_name=away_name,
-                home_abbr=home_abbr,
-                away_abbr=away_abbr,
-                id="game-scoreboard",
-            )
-
-            # Middle: Court map | Play-by-play | Box scores
-            with Horizontal(id="live-game-middle"):
-                # Left: Court map
-                with Vertical(id="live-game-court-panel"):
-                    yield CourtMap(id="game-court")
-
-                # Center: Play-by-play
-                with Vertical(id="live-game-play-by-play"):
-                    yield PlayByPlay(id="game-pbp")
-
-                # Right: Mini box scores
-                with Vertical(id="live-game-stats"):
-                    yield MiniBoxScore(
-                        team_name=home_name,
-                        player_stats=list(self._home_stats.player_stats.values()),
-                        id="home-box",
-                    )
-                    yield MiniBoxScore(
-                        team_name=away_name,
-                        player_stats=list(self._away_stats.player_stats.values()),
-                        id="away-box",
-                    )
-
-            # Bottom: Context strip (momentum, play, possession, fouls)
-            with Vertical(id="live-game-bottom"):
-                yield ContextStrip(
-                    home_name=home_name,
-                    away_name=away_name,
-                    id="game-context",
-                )
-                yield Label(
-                    " [Space] Pause  [F] Fast  [S] Slow  [I] Instant  [B] Box  [Q] End",
-                    id="live-game-controls",
-                )
-        yield Footer()
-
-    def on_mount(self) -> None:
-        """Start the simulation loop."""
-        pbp = self.query_one("#game-pbp", PlayByPlay)
-        home_name = self._home_team.full_name if self._home_team else "Home"
-        away_name = self._away_team.full_name if self._away_team else "Away"
-        pbp.add_text(
-            f"Welcome to {home_name} vs {away_name}!",
-            NarrationIntensity.HIGH,
+    def render(self) -> str:
+        """Render the live game display."""
+        lines = [self._scoreboard.render(), ""]
+        lines.append(self._court.render())
+        lines.append("")
+        lines.append(self._pbp.render())
+        lines.append("")
+        lines.append(self._context.render())
+        lines.append("")
+        lines.append(
+            " [Space] Pause  [F] Fast  [S] Slow  [I] Instant  [B] Box  [Q] End"
         )
-        pbp.add_text("Tip-off!", NarrationIntensity.MEDIUM)
+        return "\n".join(lines)
 
-        self._sim_task = asyncio.ensure_future(self._run_simulation())
+    def handle_input(self, choice: str) -> None:
+        """In Rich-only mode the game runs synchronously via run_game()."""
+        c = choice.strip().lower()
+        if c == "q":
+            self.action_end_game()
+        elif c == "b":
+            self.action_toggle_box_score()
+        elif c == "i":
+            self._tick_delay = 0.0
+            self._run_game()
 
-    async def _run_simulation(self) -> None:
-        """Main simulation loop using the real GameSimulator."""
+    def run_game(self) -> None:
+        """Run the full game simulation synchronously."""
         if self._simulator is None:
             return
 
-        while not self._game_over:
-            if self._paused:
-                await asyncio.sleep(0.05)
-                continue
+        home_name = self._home_team.full_name if self._home_team else "Home"
+        away_name = self._away_team.full_name if self._away_team else "Away"
+        self._pbp.add_text(
+            f"Welcome to {home_name} vs {away_name}!",
+            NarrationIntensity.HIGH,
+        )
+        self._pbp.add_text("Tip-off!", NarrationIntensity.MEDIUM)
 
-            # Step the simulator one tick
+        while not self._game_over:
             events = self._simulator.step()
             self._tick_count += 1
 
-            # Process events for the UI
             for sim_event in events:
-                self._handle_sim_event(sim_event)
+                if sim_event.narration:
+                    self._pbp.add_event(sim_event.narration)
 
-            # Check if game ended
             if self._simulator.is_game_over:
                 self._game_over = True
                 break
 
-            # Update UI
             self._refresh_widgets()
 
-            if self._tick_delay > 0:
-                await asyncio.sleep(self._tick_delay)
+            if self._tick_delay > 0 and self._tick_count % 50 == 0:
+                console.clear()
+                console.print(self.render())
 
         self._on_game_end()
+        console.clear()
+        console.print(self.render())
 
-    def _handle_sim_event(self, sim_event: SimEvent) -> None:
-        """Process a simulation event for the UI."""
-        if sim_event.narration is None:
-            return
+    def _run_game(self) -> None:
+        """Alias for run_game used by instant sim."""
+        self.run_game()
 
-        try:
-            pbp = self.query_one("#game-pbp", PlayByPlay)
-            pbp.add_event(sim_event.narration)
-        except Exception:
-            pass
+    def _refresh_widgets(self) -> None:
+        """Update all live game widgets."""
+        gs = self._game_state
+
+        self._scoreboard.update_state(
+            home_score=gs.score.home,
+            away_score=gs.score.away,
+            quarter=gs.clock.quarter,
+            game_clock=gs.clock.display,
+            shot_clock=gs.clock.shot_clock_display,
+            is_overtime=gs.clock.is_overtime,
+        )
+
+        self._context.update_context(momentum=self._momentum.value)
+
+        if hasattr(gs, "court_state") and gs.court_state is not None:
+            cs = gs.court_state
+            offense = [(p.position.x, p.position.y) for p in cs.offensive_players]
+            defense = [(p.position.x, p.position.y) for p in cs.defensive_players]
+            self._court.update_positions(
+                offense=offense,
+                defense=defense,
+                ball_carrier=cs.ball_handler_index,
+            )
 
     def _on_game_end(self) -> None:
         """Handle end of game."""
-        try:
-            pbp = self.query_one("#game-pbp", PlayByPlay)
-            gs = self._game_state
-            gs.phase = GamePhase.POST_GAME
-            pbp.add_text(
-                f"FINAL: {gs.score.away} - {gs.score.home}",
-                NarrationIntensity.MAXIMUM,
-            )
-        except Exception:
-            pass
-
-        self._refresh_widgets()
-
-        # Record game result if we have a scheduled game
         gs = self._game_state
+        gs.phase = GamePhase.POST_GAME
+        self._pbp.add_text(
+            f"FINAL: {gs.score.away} - {gs.score.home}",
+            NarrationIntensity.MAXIMUM,
+        )
+
         if self._scheduled_game and not self._scheduled_game.played:
             self._scheduled_game.record_result(gs.score.home, gs.score.away)
 
@@ -243,94 +217,8 @@ class LiveGameScreen(Screen):
                     is_division=same_div,
                 )
 
-    def _refresh_widgets(self) -> None:
-        """Update all live game widgets efficiently using reactive properties."""
-        gs = self._game_state
-
-        # Update broadcast scoreboard
-        try:
-            scoreboard = self.query_one("#game-scoreboard", BroadcastScoreboard)
-            scoreboard.update_state(
-                home_score=gs.score.home,
-                away_score=gs.score.away,
-                quarter=gs.clock.quarter,
-                game_clock=gs.clock.display,
-                shot_clock=gs.clock.shot_clock_display,
-                is_overtime=gs.clock.is_overtime,
-            )
-        except Exception:
-            pass
-
-        # Update context strip
-        try:
-            context = self.query_one("#game-context", ContextStrip)
-            context.update_context(
-                momentum=self._momentum.value,
-            )
-        except Exception:
-            pass
-
-        # Update court map with player positions (if available)
-        try:
-            court = self.query_one("#game-court", CourtMap)
-            # Extract player positions from court state if available
-            if hasattr(gs, "court_state") and gs.court_state is not None:
-                cs = gs.court_state
-                offense = [
-                    (p.position.x, p.position.y)
-                    for p in cs.offensive_players
-                ]
-                defense = [
-                    (p.position.x, p.position.y)
-                    for p in cs.defensive_players
-                ]
-                court.update_positions(
-                    offense=offense,
-                    defense=defense,
-                    ball_carrier=cs.ball_handler_index,
-                )
-            else:
-                court.tick_counter = self._tick_count
-        except Exception:
-            pass
-
-        # Update mini box scores every 5 ticks for performance
-        if self._tick_count % 5 == 0:
-            try:
-                home_box = self.query_one("#home-box", MiniBoxScore)
-                home_box.update_stats(list(self._home_stats.player_stats.values()))
-            except Exception:
-                pass
-
-            try:
-                away_box = self.query_one("#away-box", MiniBoxScore)
-                away_box.update_stats(list(self._away_stats.player_stats.values()))
-            except Exception:
-                pass
-
-    def action_toggle_pause(self) -> None:
-        """Toggle pause/resume."""
-        self._paused = not self._paused
-        status = "PAUSED" if self._paused else "RESUMED"
-        self.notify(status)
-
-    def action_fast_forward(self) -> None:
-        """Reduce tick delay for faster simulation."""
-        self._tick_delay = max(0.01, self._tick_delay / 2)
-        self.notify(f"Speed: {self._tick_delay:.3f}s/tick")
-
-    def action_slow_down(self) -> None:
-        """Increase tick delay for slower simulation."""
-        self._tick_delay = min(0.5, self._tick_delay * 2)
-        self.notify(f"Speed: {self._tick_delay:.3f}s/tick")
-
-    def action_instant_sim(self) -> None:
-        """Instant sim to end of game."""
-        self._tick_delay = 0.0
-        self.notify("Instant sim...")
-
     def action_toggle_box_score(self) -> None:
-        """Toggle box score overlay."""
+        """Show box score."""
         from hoops_sim.tui.screens.box_score import BoxScoreScreen
 
         self.app.push_screen(
@@ -345,8 +233,6 @@ class LiveGameScreen(Screen):
     def action_end_game(self) -> None:
         """End the game and go to post-game summary."""
         self._game_over = True
-        if self._sim_task:
-            self._sim_task.cancel()
 
         from hoops_sim.tui.screens.post_game import PostGameScreen
 

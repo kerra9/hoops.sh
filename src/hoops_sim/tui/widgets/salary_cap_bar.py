@@ -2,12 +2,8 @@
 
 from __future__ import annotations
 
-from textual.app import ComposeResult
-from textual.containers import Vertical
-from textual.widget import Widget
-from textual.widgets import Label
-
 from hoops_sim.models.league import SalaryCapInfo
+from hoops_sim.tui.base import Widget
 
 
 def _format_money(amount: int) -> str:
@@ -16,19 +12,7 @@ def _format_money(amount: int) -> str:
 
 
 class SalaryCapBar(Widget):
-    """Visual salary cap bar showing payroll vs cap thresholds.
-
-    Displays the team's payroll relative to salary cap, luxury tax,
-    and apron thresholds.
-    """
-
-    DEFAULT_CSS = """
-    SalaryCapBar {
-        height: 5;
-        width: 100%;
-        padding: 0 1;
-    }
-    """
+    """Visual salary cap bar showing payroll vs cap thresholds."""
 
     def __init__(
         self,
@@ -43,11 +27,10 @@ class SalaryCapBar(Widget):
         self._payroll = payroll
         self._cap = cap_info or SalaryCapInfo()
 
-    def compose(self) -> ComposeResult:
+    def render(self) -> str:
         cap = self._cap
         payroll = self._payroll
 
-        # Determine color based on payroll position
         if payroll > cap.second_apron:
             color = "#e74c3c"
             status = "ABOVE 2ND APRON"
@@ -64,7 +47,6 @@ class SalaryCapBar(Widget):
             color = "#2ecc71"
             status = "Under Cap"
 
-        # Build a visual bar
         max_val = cap.second_apron + 20_000_000
         bar_len = 30
         fill_len = min(bar_len, int(payroll / max_val * bar_len))
@@ -72,11 +54,10 @@ class SalaryCapBar(Widget):
         empty = "\u2591" * (bar_len - fill_len)
         bar = f"[{color}]{filled}[/]{empty}"
 
-        with Vertical(classes="salary-cap-bar"):
-            yield Label(f"Payroll: {_format_money(payroll)}  [{color}]{status}[/]")
-            yield Label(bar)
-            yield Label(
-                f"Cap: {_format_money(cap.salary_cap)}  "
-                f"Tax: {_format_money(cap.luxury_tax_threshold)}  "
-                f"Apron: {_format_money(cap.first_apron)}"
-            )
+        return (
+            f"Payroll: {_format_money(payroll)}  [{color}]{status}[/]\n"
+            f"{bar}\n"
+            f"Cap: {_format_money(cap.salary_cap)}  "
+            f"Tax: {_format_money(cap.luxury_tax_threshold)}  "
+            f"Apron: {_format_money(cap.first_apron)}"
+        )

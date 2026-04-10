@@ -2,12 +2,7 @@
 
 from __future__ import annotations
 
-from textual.app import ComposeResult
-from textual.containers import Center, Vertical
-from textual.screen import Screen
-from textual.widgets import Button, Footer, Header, Label, Select
-
-from hoops_sim.tui.widgets.seed_input import SeedInput
+from hoops_sim.tui.base import Screen, console
 
 
 class SeasonSetupScreen(Screen):
@@ -25,37 +20,26 @@ class SeasonSetupScreen(Screen):
         self._seed = 42
         self._num_teams = 30
 
-    def compose(self) -> ComposeResult:
-        yield Header()
-        with Center(id="season-setup"):
-            with Vertical(id="season-setup-form"):
-                yield Label("New Season Setup", id="setup-title")
-                yield Label("")
-                yield SeedInput(initial_seed=42, id="season-seed")
-                yield Label("")
-                yield Label("Number of Teams:")
-                yield Select(
-                    [(str(n), n) for n in [6, 10, 16, 20, 24, 30]],
-                    value=30,
-                    id="team-count",
-                )
-                yield Label("")
-                yield Button("Generate League & Start", id="btn-start-season", variant="primary")
-                yield Button("Back", id="btn-back", variant="default")
-        yield Footer()
+    def render(self) -> str:
+        return (
+            "[bold]New Season Setup[/]\n\n"
+            f"  Seed: {self._seed}\n"
+            f"  Number of Teams: {self._num_teams}\n"
+            f"  Options: 6, 10, 16, 20, 24, 30\n\n"
+            "  [bold green][G][/] Generate League & Start\n"
+            "  [bold red][B][/] Back\n"
+        )
 
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "btn-start-season":
+    def handle_input(self, choice: str) -> None:
+        c = choice.strip().lower()
+        if c == "g":
             self._start_season()
-        elif event.button.id == "btn-back":
+        elif c == "b":
             self.action_go_back()
-
-    def on_seed_input_seed_changed(self, event: SeedInput.SeedChanged) -> None:
-        self._seed = event.seed
-
-    def on_select_changed(self, event: Select.Changed) -> None:
-        if event.select.id == "team-count" and event.value is not None:
-            self._num_teams = int(event.value)
+        elif c.isdigit():
+            val = int(c)
+            if val in (6, 10, 16, 20, 24, 30):
+                self._num_teams = val
 
     def _start_season(self) -> None:
         """Generate the league and switch to the League Hub."""
@@ -65,7 +49,7 @@ class SeasonSetupScreen(Screen):
         from hoops_sim.tui.screens.league_hub import LeagueHubScreen
         from hoops_sim.utils.rng import SeededRNG
 
-        self.notify("Generating league...", title="Please wait")
+        console.print("Generating league...")
 
         rng = SeededRNG(seed=self._seed)
         league = generate_league(num_teams=self._num_teams, rng=rng)

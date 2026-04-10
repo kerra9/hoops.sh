@@ -2,11 +2,7 @@
 
 from __future__ import annotations
 
-from textual.app import ComposeResult
-from textual.containers import Horizontal
-from textual.widget import Widget
-from textual.widgets import Label
-
+from hoops_sim.tui.base import Widget
 from hoops_sim.tui.widgets.energy_gauge import FATIGUE_TIERS
 
 
@@ -14,13 +10,6 @@ class PlayerRow(Widget):
     """A single player row showing name, position, key stats, and energy.
 
     Designed for use in roster tables and mini box scores.
-    """
-
-    DEFAULT_CSS = """
-    PlayerRow {
-        height: 1;
-        layout: horizontal;
-    }
     """
 
     def __init__(
@@ -44,15 +33,13 @@ class PlayerRow(Widget):
         self._energy_pct = energy_pct
         self._fatigue_tier = fatigue_tier
 
-    def compose(self) -> ComposeResult:
+    def render(self) -> str:
         _, color = FATIGUE_TIERS.get(self._fatigue_tier, ("?", "#888888"))
         energy_bar_w = int(self._energy_pct * 8)
         filled = "\u2588" * energy_bar_w
         empty = "\u2591" * (8 - energy_bar_w)
         energy_bar = f"[{color}]{filled}{empty}[/]"
-        with Horizontal(classes="player-row"):
-            yield Label(f"{self._player_name:<20}", classes="player-row-name")
-            yield Label(f"{self._position:<4}", classes="player-row-pos")
-            yield Label(f"{self._overall:>3} ", classes="player-row-ovr")
-            yield Label(f"{self._stats_text:<30}", classes="player-row-stats")
-            yield Label(energy_bar, classes="player-row-energy")
+        return (
+            f"{self._player_name:<20} {self._position:<4} "
+            f"{self._overall:>3}  {self._stats_text:<30} {energy_bar}"
+        )

@@ -2,28 +2,14 @@
 
 from __future__ import annotations
 
-from typing import Dict, List, Optional
-
-from textual.app import ComposeResult
-from textual.widget import Widget
-from textual.widgets import DataTable
+from typing import Dict, List
 
 from hoops_sim.season.schedule import ScheduledGame
+from hoops_sim.tui.base import Widget
 
 
 class ScheduleCalendar(Widget):
-    """Day-by-day game listing with results.
-
-    Shows games organized by day with scores for completed games
-    and matchup info for upcoming games.
-    """
-
-    DEFAULT_CSS = """
-    ScheduleCalendar {
-        height: auto;
-        width: 100%;
-    }
-    """
+    """Day-by-day game listing with results."""
 
     def __init__(
         self,
@@ -40,22 +26,11 @@ class ScheduleCalendar(Widget):
         self._team_names = team_names or {}
         self._current_day = current_day
 
-    def compose(self) -> ComposeResult:
-        table = DataTable(id="schedule-table")
-        table.add_columns("Day", "Away", "Score", "Home", "Status")
-        yield table
-
-    def on_mount(self) -> None:
-        self._populate()
-
-    def _populate(self) -> None:
-        table = self.query_one(DataTable)
-        table.clear()
-
+    def render(self) -> str:
+        lines = [f"{'Day':>4} {'Away':<16} {'Score':>10} {'Home':<16} {'Status'}"]
         for game in sorted(self._games, key=lambda g: (g.day, g.game_id)):
             home_name = self._team_names.get(game.home_team_id, f"Team {game.home_team_id}")
             away_name = self._team_names.get(game.away_team_id, f"Team {game.away_team_id}")
-
             if game.played:
                 score = f"{game.away_score} - {game.home_score}"
                 status = "Final"
@@ -65,17 +40,10 @@ class ScheduleCalendar(Widget):
             else:
                 score = "vs"
                 status = f"Day {game.day}"
-
-            table.add_row(
-                str(game.day),
-                away_name,
-                score,
-                home_name,
-                status,
-            )
+            lines.append(f"{game.day:>4} {away_name:<16} {score:>10} {home_name:<16} {status}")
+        return "\n".join(lines)
 
     def update_games(self, games: List[ScheduledGame], current_day: int) -> None:
         """Update the schedule display."""
         self._games = games
         self._current_day = current_day
-        self._populate()

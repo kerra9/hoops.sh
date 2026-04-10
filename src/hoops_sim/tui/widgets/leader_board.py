@@ -4,23 +4,11 @@ from __future__ import annotations
 
 from typing import List, Tuple
 
-from textual.app import ComposeResult
-from textual.widget import Widget
-from textual.widgets import Label
+from hoops_sim.tui.base import Widget
 
 
 class LeaderBoard(Widget):
-    """Stat leader display showing top performers in a category.
-
-    Shows stat name, player name, and value.
-    """
-
-    DEFAULT_CSS = """
-    LeaderBoard {
-        height: auto;
-        width: 100%;
-    }
-    """
+    """Stat leader display showing top performers in a category."""
 
     def __init__(
         self,
@@ -36,14 +24,14 @@ class LeaderBoard(Widget):
         self._title = title
         self._leaders = leaders or []
 
-    def compose(self) -> ComposeResult:
-        yield Label(f"[bold]{self._title}[/]")
+    def render(self) -> str:
+        lines = [f"[bold]{self._title}[/]"]
         for stat, player, value in self._leaders:
-            yield Label(f"  {stat}: {player} {value}")
+            lines.append(f"  {stat}: {player} {value}")
         if not self._leaders:
-            yield Label("  [dim]No stats yet[/]")
+            lines.append("  [dim]No stats yet[/]")
+        return "\n".join(lines)
 
     def update_leaders(self, leaders: List[Tuple[str, str, str]]) -> None:
         """Update the leader board."""
         self._leaders = leaders
-        self.refresh(recompose=True)

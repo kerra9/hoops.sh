@@ -7,11 +7,8 @@ from __future__ import annotations
 
 from typing import List
 
-from textual.app import ComposeResult
-from textual.widget import Widget
-from textual.widgets import RichLog
-
 from hoops_sim.narration.engine import NarrationEvent, NarrationIntensity
+from hoops_sim.tui.base import Widget
 from hoops_sim.tui.theme import (
     PBP_DEFAULT,
     PBP_LOW,
@@ -50,15 +47,8 @@ def _event_color(event: NarrationEvent) -> str:
 class PlayByPlay(Widget):
     """Scrolling narration log for play-by-play text.
 
-    Consumes NarrationEvent objects, auto-scrolls,
-    and supports intensity-based coloring with structured formatting.
-    """
-
-    DEFAULT_CSS = """
-    PlayByPlay {
-        height: 100%;
-        width: 100%;
-    }
+    Consumes NarrationEvent objects and supports intensity-based coloring
+    with structured formatting.
     """
 
     def __init__(
@@ -70,25 +60,16 @@ class PlayByPlay(Widget):
     ) -> None:
         super().__init__(name=name, id=id, classes=classes)
         self._events: List[NarrationEvent] = []
-
-    def compose(self) -> ComposeResult:
-        yield RichLog(id="pbp-log", wrap=True, highlight=True, auto_scroll=True)
+        self._lines: List[str] = []
 
     def add_event(self, event: NarrationEvent) -> None:
         """Add a narration event with structured formatting."""
         self._events.append(event)
-        try:
-            log = self.query_one("#pbp-log", RichLog)
-            color = _event_color(event)
-
-            if event.is_milestone:
-                # Milestone events get special formatting
-                log.write(f"[{color}]\u2605 \u2550\u2550 {event.text} \u2550\u2550[/]")
-            else:
-                prefix = "\u2022 "
-                log.write(f"[{color}]{prefix}{event.text}[/]")
-        except Exception:
-            pass
+        color = _event_color(event)
+        if event.is_milestone:
+            self._lines.append(f"[{color}]\u2605 \u2550\u2550 {event.text} \u2550\u2550[/]")
+        else:
+            self._lines.append(f"[{color}]\u2022 {event.text}[/]")
 
     def add_text(
         self, text: str, intensity: NarrationIntensity = NarrationIntensity.MEDIUM
@@ -99,8 +80,8 @@ class PlayByPlay(Widget):
     def clear(self) -> None:
         """Clear the play-by-play log."""
         self._events.clear()
-        try:
-            log = self.query_one("#pbp-log", RichLog)
-            log.clear()
-        except Exception:
-            pass
+        self._lines.clear()
+
+    def render(self) -> str:
+        """Return the last N lines of play-by-play."""
+        return "\n".join(self._lines[-20:])

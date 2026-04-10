@@ -2,26 +2,12 @@
 
 from __future__ import annotations
 
-from textual.app import ComposeResult
-from textual.widget import Widget
-from textual.widgets import Label
-
+from hoops_sim.tui.base import Widget
 from hoops_sim.tui.theme import ACCENT_SUCCESS
 
 
 class SeasonProgressBar(Widget):
-    """Games played progress bar.
-
-    Shows a visual bar and fraction of games completed.
-    """
-
-    DEFAULT_CSS = """
-    SeasonProgressBar {
-        height: 2;
-        width: 100%;
-        padding: 0 1;
-    }
-    """
+    """Games played progress bar."""
 
     def __init__(
         self,
@@ -36,15 +22,13 @@ class SeasonProgressBar(Widget):
         self._games_played = games_played
         self._total_games = max(1, total_games)
 
-    def compose(self) -> ComposeResult:
+    def render(self) -> str:
         pct = self._games_played / self._total_games
         bar_w = int(pct * 20)
         filled = "\u2588" * bar_w
         empty = "\u2591" * (20 - bar_w)
-        yield Label(
-            f"  [{ACCENT_SUCCESS}]{filled}[/]{empty} {pct:.0%}"
-        )
-        yield Label(
+        return (
+            f"  [{ACCENT_SUCCESS}]{filled}[/]{empty} {pct:.0%}\n"
             f"  {self._games_played} / {self._total_games} games played"
         )
 
@@ -52,4 +36,3 @@ class SeasonProgressBar(Widget):
         """Update progress bar."""
         self._games_played = games_played
         self._total_games = max(1, total_games)
-        self.refresh(recompose=True)

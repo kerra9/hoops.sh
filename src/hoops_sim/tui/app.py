@@ -1,40 +1,43 @@
-"""HoopsApp - Textual App subclass with screen routing."""
+"""HoopsApp - Rich-only App with screen routing."""
 
 from __future__ import annotations
 
-from textual.app import App
-from textual.binding import Binding
+from hoops_sim.tui.base import App
 
 
 class HoopsApp(App):
     """The hoops.sh TUI application.
 
-    Terminal-native basketball simulation interface built with Textual.
+    Terminal-native basketball simulation interface built with Rich.
     """
 
     TITLE = "hoops.sh"
     SUB_TITLE = "Maximum Fidelity Basketball Simulator"
-    CSS_PATH = [
-        "styles/base.tcss",
-        "styles/scoreboard.tcss",
-        "styles/court.tcss",
-        "styles/tables.tcss",
-        "styles/cards.tcss",
-        "styles/widgets.tcss",
-        "styles/screens.tcss",
-    ]
 
-    BINDINGS = [
-        Binding("q", "quit", "Quit", show=True),
-        Binding("question_mark", "help", "Help", show=True),
-    ]
-
-    def on_mount(self) -> None:
-        """Push the main menu screen on startup."""
+    def run(self) -> None:
+        """Run the application with a Rich console input loop."""
+        from hoops_sim.tui.base import console
         from hoops_sim.tui.screens.main_menu import MainMenuScreen
 
-        self.push_screen(MainMenuScreen())
+        self._running = True
+        screen = MainMenuScreen()
+        screen.app = self
+        self._screen_stack = [screen]
 
-    def action_help(self) -> None:
-        """Show keyboard shortcuts."""
-        self.notify("Press ? for help, q to quit", title="Keyboard Shortcuts")
+        while self._running and self._screen_stack:
+            current = self._screen_stack[-1]
+            current.app = self
+
+            console.clear()
+            console.print(f"[bold]{self.TITLE}[/] -- {self.SUB_TITLE}\n")
+            rendered = current.render()
+            if rendered:
+                console.print(rendered)
+
+            try:
+                choice = console.input("\n[dim]> [/]")
+            except (EOFError, KeyboardInterrupt):
+                break
+
+            if hasattr(current, "handle_input"):
+                current.handle_input(choice)

@@ -2,11 +2,7 @@
 
 from __future__ import annotations
 
-from textual.app import ComposeResult
-from textual.reactive import reactive
-from textual.widget import Widget
-from textual.widgets import Label
-
+from hoops_sim.tui.base import Widget
 from hoops_sim.tui.theme import MOMENTUM_AWAY, MOMENTUM_HOME, MOMENTUM_NEUTRAL
 
 
@@ -15,18 +11,7 @@ class MomentumBar(Widget):
 
     Positive = home team has momentum (green, right).
     Negative = away team has momentum (red, left).
-    Uses reactive properties for efficient updates.
     """
-
-    DEFAULT_CSS = """
-    MomentumBar {
-        height: 1;
-        layout: horizontal;
-        width: 100%;
-    }
-    """
-
-    value: reactive[float] = reactive(0.0)
 
     def __init__(
         self,
@@ -43,10 +28,7 @@ class MomentumBar(Widget):
         self._away_name = away_name
         self.value = max(-5.0, min(5.0, value))
 
-    def compose(self) -> ComposeResult:
-        yield Label("", id="momentum-display")
-
-    def _render_bar(self) -> str:
+    def render(self) -> str:
         """Build the momentum bar string."""
         bar_len = 20
         center = bar_len // 2
@@ -68,19 +50,6 @@ class MomentumBar(Widget):
 
         bar_str = "".join(bar_chars)
         return f"{self._away_name:<8} [{color}]{bar_str}[/] {self._home_name:>8}"
-
-    def watch_value(self, _val: float) -> None:
-        """React to momentum changes."""
-        try:
-            self.query_one("#momentum-display", Label).update(self._render_bar())
-        except Exception:
-            pass
-
-    def on_mount(self) -> None:
-        try:
-            self.query_one("#momentum-display", Label).update(self._render_bar())
-        except Exception:
-            pass
 
     def update_momentum(self, value: float) -> None:
         """Update the momentum display."""

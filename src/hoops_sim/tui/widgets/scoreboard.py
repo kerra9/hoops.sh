@@ -2,32 +2,11 @@
 
 from __future__ import annotations
 
-from textual.app import ComposeResult
-from textual.containers import Horizontal
-from textual.reactive import reactive
-from textual.widget import Widget
-from textual.widgets import Label
+from hoops_sim.tui.base import Widget
 
 
 class Scoreboard(Widget):
-    """Compact score display: team names, score, quarter, game/shot clock.
-
-    Uses reactive properties instead of recompose for efficient updates.
-    """
-
-    DEFAULT_CSS = """
-    Scoreboard {
-        layout: horizontal;
-        height: 3;
-        align: center middle;
-        background: $primary-background;
-        padding: 0 2;
-        width: 100%;
-    }
-    """
-
-    home_score: reactive[int] = reactive(0)
-    away_score: reactive[int] = reactive(0)
+    """Compact score display: team names, score, quarter, game/shot clock."""
 
     def __init__(
         self,
@@ -46,35 +25,12 @@ class Scoreboard(Widget):
         self.home_score = home_score
         self.away_score = away_score
 
-    def compose(self) -> ComposeResult:
-        with Horizontal(classes="scoreboard"):
-            yield Label(self._away_name, classes="scoreboard-team", id="sb-away-name")
-            yield Label(
-                f"[bold]{self.away_score}[/]",
-                classes="scoreboard-score",
-                id="sb-away-score",
-            )
-            yield Label(" - ", classes="scoreboard-divider")
-            yield Label(
-                f"[bold]{self.home_score}[/]",
-                classes="scoreboard-score",
-                id="sb-home-score",
-            )
-            yield Label(self._home_name, classes="scoreboard-team", id="sb-home-name")
-
-    def watch_home_score(self, value: int) -> None:
-        """React to home score changes."""
-        try:
-            self.query_one("#sb-home-score", Label).update(f"[bold]{value}[/]")
-        except Exception:
-            pass
-
-    def watch_away_score(self, value: int) -> None:
-        """React to away score changes."""
-        try:
-            self.query_one("#sb-away-score", Label).update(f"[bold]{value}[/]")
-        except Exception:
-            pass
+    def render(self) -> str:
+        return (
+            f"{self._away_name} [bold]{self.away_score}[/]"
+            f" - "
+            f"[bold]{self.home_score}[/] {self._home_name}"
+        )
 
     def update_score(self, home_score: int, away_score: int) -> None:
         """Update the scoreboard."""
