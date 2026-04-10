@@ -18,6 +18,11 @@ class DribbleMoveType(enum.Enum):
     STEP_BACK = "step_back"
     EURO_STEP = "euro_step"
     IN_AND_OUT = "in_and_out"
+    # New moves added in the micro-action overhaul
+    BETWEEN_THE_LEGS = "between_the_legs"
+    SHAMGOD = "shamgod"
+    SNATCH_BACK = "snatch_back"
+    HARDEN_STEP_BACK = "harden_step_back"
 
 
 @dataclass(frozen=True)
@@ -68,6 +73,27 @@ DRIBBLE_MOVES: dict[DribbleMoveType, DribbleMoveSpec] = {
         speed_boost=1.12, space_created=1.5, turnover_risk=0.02,
         time_cost=0.35, energy_cost=0.02, ankle_breaker_threshold=93,
         defender_freeze_time=0.25,
+    ),
+    # New moves added in the micro-action overhaul
+    DribbleMoveType.BETWEEN_THE_LEGS: DribbleMoveSpec(
+        speed_boost=1.08, space_created=1.5, turnover_risk=0.015,
+        time_cost=0.35, energy_cost=0.02, ankle_breaker_threshold=94,
+        defender_freeze_time=0.2,
+    ),
+    DribbleMoveType.SHAMGOD: DribbleMoveSpec(
+        speed_boost=1.20, space_created=3.5, turnover_risk=0.08,
+        time_cost=0.5, energy_cost=0.04, ankle_breaker_threshold=85,
+        defender_freeze_time=0.5,
+    ),
+    DribbleMoveType.SNATCH_BACK: DribbleMoveSpec(
+        speed_boost=0.0, space_created=2.5, turnover_risk=0.025,
+        time_cost=0.4, energy_cost=0.03, ankle_breaker_threshold=90,
+        defender_freeze_time=0.3,
+    ),
+    DribbleMoveType.HARDEN_STEP_BACK: DribbleMoveSpec(
+        speed_boost=0.0, space_created=4.0, turnover_risk=0.03,
+        time_cost=0.6, energy_cost=0.04, ankle_breaker_threshold=88,
+        defender_freeze_time=0.4,
     ),
 }
 
