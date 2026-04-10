@@ -61,6 +61,7 @@ from hoops_sim.engine.court_state import (
 from hoops_sim.engine.game import GamePhase, GameState
 from hoops_sim.engine.possession import PossessionState
 from hoops_sim.engine.situational import evaluate_situation
+from hoops_sim.engine.transition import evaluate_transition
 from hoops_sim.models.stats import TeamGameStats
 from hoops_sim.models.team import Team
 from hoops_sim.narration.broadcast_mixer import BroadcastLine, BroadcastMixer
@@ -224,6 +225,8 @@ class GameSimulator:
         # Micro-action tracking
         self._possession_events: list[PossessionEvent] = []
         self._current_play: PlayDefinition | None = None
+        self._pending_screener_id: int | None = None
+        self._is_transition: bool = False
 
     # -- Public API -----------------------------------------------------------
 
@@ -301,25 +304,33 @@ class GameSimulator:
             is_home=is_home,
         )
 
-        # Phase 1: Bring the ball up court (3-6 seconds)
-        bring_up_ticks = self._rng.randint(30, 60)
+        # Phase 1: Bring the ball up court
+        # Transition possessions are faster (1-3 seconds vs 3-6 seconds)
+        is_transition = self._is_transition
+        self._is_transition = False  # Reset for next possession
+        if is_transition:
+            bring_up_ticks = self._rng.randint(10, 30)
+        else:
+            bring_up_ticks = self._rng.randint(30, 60)
         handler = self._get_ball_handler(home_on_offense)
         handler_name = handler.player.full_name if handler else ""
         self._broadcast_event(BallAdvanceEvent(
             ball_handler_name=handler_name,
-            is_transition=False,
+            is_transition=is_transition,
             seconds_to_advance=bring_up_ticks * TICK_DURATION,
             **self._make_base_fields(),
         ))
         self._advance_clock(bring_up_ticks * TICK_DURATION)
         self._drain_energy_for_ticks(bring_up_ticks)
         if self._check_quarter_end():
-            if self.broadcast_mixer is not None:
-                self.broadcast_mixer.end_possession()
+            self._flush_broadcast_lines()
             return
 
-        # Phase 2: Coach selects play
-        self._current_play = self._select_play(home_on_offense, situation_type)
+        # Phase 2: Coach selects play (fast break in transition)
+        if is_transition:
+            self._current_play = FAST_BREAK
+        else:
+            self._current_play = self._select_play(home_on_offense, situation_type)
         self._assign_play_roles(home_on_offense)
 
         # Emit possession start event
@@ -470,7 +481,12 @@ class GameSimulator:
             return True
 
         else:
-            # Hold: dribble in place, maybe execute a move
+            # Hold: try using a screen if one is pending, otherwise dribble
+            if self._pending_screener_id is not None:
+                screener_pcs = self.court.get_player_state(self._pending_screener_id)
+                if screener_pcs and screener_pcs.fsm.is_complete:
+                    self._execute_screen(handler, home_on_offense)
+                    return False
             if self._rng.random() < 0.3:
                 self._execute_dribble_move(handler, home_on_offense)
             handler.fsm.transition_to(
@@ -522,6 +538,55 @@ class GameSimulator:
     ) -> None:
         """Decide what an off-ball offensive player does next."""
         player = pcs.player
+        roll = self._rng.random()
+
+        # Check defender position for backdoor cut opportunity
+        def_dist = self.court.defender_distance(pcs.player_id, home_on_offense)
+        defender_overplaying = def_dist < 2.5
+
+        # Backdoor cut when defender overplays passing lane
+        if defender_overplaying and player.attributes.athleticism.speed > 65 and roll < 0.35:
+            pcs.fsm.transition_to(
+                OffBallOffenseState.CUTTING,
+                ticks=self._rng.randint(6, 12),
+                target=basket,
+                intent=MovementIntent.SPRINT,
+            )
+            return
+
+        # Set off-ball screen (pin-down, flare) for teammates
+        if (player.attributes.athleticism.strength > 65
+                and player.body.weight_lbs > 200
+                and roll < 0.20):
+            # Find a shooter teammate to screen for
+            ball_handler = self.court.ball_handler()
+            teammates = [
+                t for t in self.court.offensive_players(home_on_offense)
+                if t.player_id != pcs.player_id
+                and (ball_handler is None or t.player_id != ball_handler.player_id)
+                and t.player.attributes.shooting.three_point > 70
+            ]
+            if teammates:
+                screen_target = teammates[0].position
+                pcs.fsm.transition_to(
+                    OffBallOffenseState.SETTING_SCREEN,
+                    ticks=self._rng.randint(10, 18),
+                    target=screen_target,
+                    intent=MovementIntent.JOG,
+                )
+                return
+
+        # Crash offensive glass based on tendencies
+        if (player.tendencies.crash_boards > 0.5
+                and player.attributes.rebounding.offensive_rebound > 60
+                and roll < 0.25):
+            pcs.fsm.transition_to(
+                OffBallOffenseState.CRASHING_BOARDS,
+                ticks=self._rng.randint(10, 20),
+                target=basket,
+                intent=MovementIntent.SPRINT,
+            )
+            return
 
         # Spot up at the three-point line if a shooter
         if player.attributes.shooting.three_point > 65:
@@ -532,8 +597,8 @@ class GameSimulator:
                 target=target,
                 intent=MovementIntent.JOG,
             )
-        # Cut if a good finisher/cutter
-        elif player.tendencies.crash_boards > 0.5 and self._rng.random() < 0.2:
+        # Cut if a good finisher
+        elif player.attributes.finishing.layup > 70 and roll < 0.30:
             pcs.fsm.transition_to(
                 OffBallOffenseState.CUTTING,
                 ticks=self._rng.randint(8, 15),
@@ -693,20 +758,129 @@ class GameSimulator:
         return self._rng.choices(plays, weights=weights, k=1)[0]
 
     def _assign_play_roles(self, home_on_offense: bool) -> None:
-        """Assign play roles to players (simplified for now)."""
-        # The play executor handles detailed FSM assignments;
-        # here we just set initial movement targets based on the play
-        pass
+        """Assign play roles to players based on the selected play."""
+        if self._current_play is None:
+            return
+
+        offense = self.court.offensive_players(home_on_offense)
+        ball_handler = self.court.ball_handler()
+        basket = self.court.basket_position(home_on_offense)
+        if not offense or ball_handler is None:
+            return
+
+        # Non-handler players
+        off_ball = [p for p in offense if p.player_id != ball_handler.player_id]
+        if not off_ball:
+            return
+
+        play_name = self._current_play.name
+
+        if play_name == PICK_AND_ROLL.name and off_ball:
+            # Pick best screener: heaviest / strongest player
+            screener = max(
+                off_ball,
+                key=lambda p: (
+                    p.player.attributes.athleticism.strength
+                    + p.player.body.weight_lbs
+                ),
+            )
+            # Move screener toward ball handler to set screen
+            screen_pos = ball_handler.position + (basket - ball_handler.position).normalized() * 3.0
+            screener.fsm.transition_to(
+                OffBallOffenseState.SETTING_SCREEN,
+                ticks=self._rng.randint(10, 20),
+                target=screen_pos,
+                intent=MovementIntent.JOG,
+            )
+            self._pending_screener_id = screener.player_id
+
+        elif play_name == ISOLATION.name:
+            # Clear out: all off-ball players space to the perimeter
+            for pcs in off_ball:
+                target = self._find_spot_up_position(pcs, home_on_offense)
+                pcs.fsm.transition_to(
+                    OffBallOffenseState.SPOTTING_UP,
+                    ticks=self._rng.randint(15, 30),
+                    target=target,
+                    intent=MovementIntent.JOG,
+                )
+            self._pending_screener_id = None
+
+        elif play_name == MOTION_OFFENSE.name:
+            # Motion: one player cuts, one screens away, rest space
+            if len(off_ball) >= 2:
+                cutter = off_ball[0]
+                screener = off_ball[1]
+                cutter.fsm.transition_to(
+                    OffBallOffenseState.CUTTING,
+                    ticks=self._rng.randint(8, 15),
+                    target=basket,
+                    intent=MovementIntent.SPRINT,
+                )
+                # Screen away from the ball
+                screen_target = cutter.position + (basket - cutter.position).normalized() * 5.0
+                screener.fsm.transition_to(
+                    OffBallOffenseState.SETTING_SCREEN,
+                    ticks=self._rng.randint(10, 18),
+                    target=screen_target,
+                    intent=MovementIntent.JOG,
+                )
+            for pcs in off_ball[2:]:
+                target = self._find_spot_up_position(pcs, home_on_offense)
+                pcs.fsm.transition_to(
+                    OffBallOffenseState.SPOTTING_UP,
+                    ticks=self._rng.randint(15, 30),
+                    target=target,
+                    intent=MovementIntent.JOG,
+                )
+            self._pending_screener_id = None
+
+        elif play_name == POST_UP.name and off_ball:
+            # Find best post player
+            post_player = max(
+                off_ball,
+                key=lambda p: p.player.attributes.finishing.post_moves,
+            )
+            post_pos = basket + Vec2(0, self._rng.choice([-5.0, 5.0]))
+            post_player.fsm.transition_to(
+                OffBallOffenseState.CUTTING,
+                ticks=self._rng.randint(10, 20),
+                target=post_pos,
+                intent=MovementIntent.JOG,
+            )
+            for pcs in off_ball:
+                if pcs.player_id != post_player.player_id:
+                    target = self._find_spot_up_position(pcs, home_on_offense)
+                    pcs.fsm.transition_to(
+                        OffBallOffenseState.SPOTTING_UP,
+                        ticks=self._rng.randint(15, 30),
+                        target=target,
+                        intent=MovementIntent.JOG,
+                    )
+            self._pending_screener_id = None
+        else:
+            self._pending_screener_id = None
 
     def _end_possession_and_flip(self) -> None:
         """Flip possession to the other team."""
-        # End broadcast possession
-        if self.broadcast_mixer is not None:
-            self.broadcast_mixer.end_possession()
+        # End broadcast possession and capture output
+        self._flush_broadcast_lines()
         old_off = self._off_team_id
         old_def = self._def_team_id
         self._off_team_id = old_def
         self._def_team_id = old_off
+
+    def _flush_broadcast_lines(self) -> None:
+        """Capture broadcast mixer output and convert to SimEvents."""
+        if self.broadcast_mixer is None:
+            return
+        lines = self.broadcast_mixer.end_possession()
+        for line in lines:
+            narration = NarrationEvent(text=line.text)
+            self._emit("broadcast", narration, {
+                "voice": line.voice,
+                "intensity": line.intensity,
+            })
 
     def _advance_clock(self, seconds: float) -> None:
         """Advance the game clock by the given seconds."""
@@ -919,6 +1093,125 @@ class GameSimulator:
         return qualities
 
     # -- Micro-action execution -----------------------------------------------
+
+    def _execute_screen(
+        self, handler: PlayerCourtState, home_on_offense: bool,
+    ) -> bool:
+        """Execute a screen action using the full screen mechanics.
+
+        Returns True if the screen was set successfully (handler gets
+        advantage), False if it resulted in a foul or was ineffective.
+        """
+        if self._pending_screener_id is None:
+            return False
+
+        screener_pcs = self.court.get_player_state(self._pending_screener_id)
+        if screener_pcs is None:
+            self._pending_screener_id = None
+            return False
+
+        player = handler.player
+        screener = screener_pcs.player
+        basket = self.court.basket_position(home_on_offense)
+
+        # Find the on-ball defender
+        closest_def = self.court.closest_defender_to(handler.position, home_on_offense)
+        if closest_def is None:
+            self._pending_screener_id = None
+            return False
+
+        defender = closest_def.player
+
+        # Evaluate screen quality
+        screen_result = evaluate_screen(
+            screen_type=ScreenType.BALL_SCREEN,
+            screener_strength=screener.attributes.athleticism.strength,
+            screener_weight=screener.body.weight_lbs,
+            screener_screen_rating=screener.attributes.playmaking.screen_setting
+            if hasattr(screener.attributes.playmaking, "screen_setting")
+            else 65,
+            defender_strength=defender.attributes.athleticism.strength,
+            defender_weight=defender.body.weight_lbs,
+            is_stationary=self._rng.random() < 0.85,
+            moving_screen_detection=0.4,
+            rng=self._phys_rng,
+        )
+
+        # Moving screen called - foul on screener
+        if screen_result.moving_screen_called:
+            self._pending_screener_id = None
+            # Record offensive foul as turnover
+            self._turnover(handler, home_on_offense)
+            return False
+
+        # Evaluate PnR defensive coverage
+        coverage_type = self._rng.choice([
+            PnRCoverageType.DROP, PnRCoverageType.SWITCH,
+            PnRCoverageType.HEDGE, PnRCoverageType.BLITZ,
+        ])
+        pnr_result = evaluate_pnr_coverage(
+            coverage=coverage_type,
+            handler_ball_handle=player.attributes.playmaking.ball_handle,
+            handler_three_point=player.attributes.shooting.three_point,
+            screener_roll_rating=max(
+                screener.attributes.finishing.layup,
+                screener.attributes.finishing.standing_dunk,
+            ),
+            screener_can_shoot=screener.attributes.shooting.mid_range > 70,
+            defender_lateral=defender.attributes.defense.lateral_quickness,
+            big_defender_perimeter=50,
+        )
+
+        # Update FSMs
+        handler.fsm.transition_to(
+            BallHandlerState.USING_SCREEN,
+            ticks=self._rng.randint(5, 10),
+            target=handler.position + (basket - handler.position).normalized() * 5.0,
+            intent=MovementIntent.SPRINT,
+        )
+
+        # Screener rolls or pops
+        roller_or_popper = "roll"
+        if screener.attributes.shooting.mid_range > 70 and self._rng.random() < 0.4:
+            roller_or_popper = "pop"
+            pop_target = screener_pcs.position + (
+                screener_pcs.position - basket
+            ).normalized() * 10.0
+            screener_pcs.fsm.transition_to(
+                OffBallOffenseState.POPPING,
+                ticks=self._rng.randint(8, 15),
+                target=pop_target,
+                intent=MovementIntent.JOG,
+            )
+        else:
+            screener_pcs.fsm.transition_to(
+                OffBallOffenseState.ROLLING,
+                ticks=self._rng.randint(8, 15),
+                target=basket,
+                intent=MovementIntent.SPRINT,
+            )
+
+        # Apply separation from screen
+        handler.fsm.defender_separation += screen_result.separation_created
+
+        # Emit screen event
+        self._broadcast_event(ScreenEvent(
+            screener_name=screener.full_name,
+            handler_name=player.full_name,
+            screen_type=ScreenType.BALL_SCREEN.value,
+            defender_reaction=coverage_type.value,
+            pnr_coverage=coverage_type.value,
+            roller_or_popper=roller_or_popper,
+            switch_occurred=pnr_result.mismatch_created,
+            **self._make_base_fields(),
+        ))
+
+        # Consume screen time
+        self._advance_clock(self._rng.uniform(1.0, 2.0))
+
+        # Clear pending screener
+        self._pending_screener_id = None
+        return True
 
     def _execute_dribble_move(
         self, handler: PlayerCourtState, home_on_offense: bool,
@@ -1282,6 +1575,17 @@ class GameSimulator:
             intent=MovementIntent.SPRINT,
         )
 
+        # Emit drive initiation event
+        closest_def = self.court.closest_defender_to(handler.position, home_on_offense)
+        def_name = closest_def.player.full_name if closest_def else ""
+        self._broadcast_event(DriveEvent(
+            driver_name=player.full_name,
+            driver_id=player.id,
+            defender_name=def_name,
+            distance_to_basket=handler.position.distance_to(basket),
+            **self._make_base_fields(),
+        ))
+
         # Move handler toward basket
         to_basket = (basket - handler.position).normalized()
         drive_dist = attribute_to_range(player.attributes.athleticism.speed, 5.0, 10.0)
@@ -1475,7 +1779,21 @@ class GameSimulator:
                 self._turnover(handler, is_home)
             return True
 
-        # Successful pass
+        # Successful pass -- emit broadcast event
+        self._broadcast_event(PassEvent(
+            passer_name=player.full_name,
+            passer_id=player.id,
+            receiver_name=target.player.full_name,
+            receiver_id=target_id,
+            pass_type=pass_type.value,
+            distance=dist,
+            is_entry_pass=target.position.distance_to(basket) < 10.0,
+            is_skip_pass=dist > 25.0,
+            is_kick_out=handler.fsm.current_state == BallHandlerState.DRIVING,
+            lane_quality=lane.quality,
+            **self._make_base_fields(),
+        ))
+
         self._last_passer_id = handler.player_id
         self.court.ball.holder_id = target_id
         self.court.ball.status = BallStatus.HELD
@@ -1661,6 +1979,8 @@ class GameSimulator:
             self.game_state.clock.shot_clock = min(14.0, self.game_state.clock.game_clock)
         else:
             stats.defensive_rebounds += 1
+            # Evaluate transition opportunity after defensive rebound
+            self._evaluate_transition_opportunity(pcs, home_on_offense, is_steal=False)
 
         if self.broadcast_stats:
             self.broadcast_stats.on_rebound(pcs.player_id, pcs.player.full_name, is_oreb)
@@ -1670,6 +1990,40 @@ class GameSimulator:
             is_offensive=is_oreb,
             **self._make_base_fields(),
         ))
+
+    def _evaluate_transition_opportunity(
+        self, ball_player: PlayerCourtState, home_on_offense: bool, is_steal: bool,
+    ) -> None:
+        """Evaluate whether to push in transition after a rebound or steal."""
+        # The new offense is the opposite of whoever was on offense
+        new_off_is_home = not home_on_offense
+        new_offense = self.court.home_on_court if new_off_is_home else self.court.away_on_court
+        new_defense = self.court.away_on_court if new_off_is_home else self.court.home_on_court
+        basket = self.court.basket_position(new_off_is_home)
+
+        offense_data = [
+            (p.player_id, p.position, p.player.attributes.athleticism.speed)
+            for p in new_offense
+        ]
+        defense_data = [
+            (p.player_id, p.position, p.player.attributes.athleticism.speed)
+            for p in new_defense
+        ]
+
+        trans_result = evaluate_transition(
+            rebounder_speed=ball_player.player.attributes.athleticism.speed,
+            rebounder_transition_tendency=getattr(
+                ball_player.player.tendencies, "transition_tendency", 0.5,
+            ),
+            offense_positions=offense_data,
+            defense_positions=defense_data,
+            basket_position=basket,
+            is_steal=is_steal,
+            rng=self._rng,
+        )
+
+        if trans_result.should_push:
+            self._is_transition = True
 
     def _turnover(self, handler: PlayerCourtState, is_home: bool) -> None:
         stats = self._player_stats(handler.player_id, is_home)
@@ -1710,6 +2064,8 @@ class GameSimulator:
             self.momentum.on_steal(not is_home)
             if self.broadcast_stats:
                 self.broadcast_stats.on_steal(stealer.player_id, stealer_name)
+            # Evaluate transition opportunity after steal
+            self._evaluate_transition_opportunity(stealer, is_home, is_steal=True)
 
         if self.broadcast_stats:
             self.broadcast_stats.on_turnover(handler.player_id, handler.player.full_name)
@@ -1771,6 +2127,13 @@ class GameSimulator:
         is_home = home_on_offense
         team_stats = self.home_stats if is_home else self.away_stats
         team_stats.turnovers += 1
+        self._broadcast_event(TurnoverEvent(
+            player_name="",
+            player_id=0,
+            is_steal=False,
+            team_name=self._team_name(is_home),
+            **self._make_base_fields(),
+        ))
         if self.narration:
             ev = NarrationEvent(
                 text=f"Shot clock violation! Turnover, {self._team_name(not is_home)} ball.",
