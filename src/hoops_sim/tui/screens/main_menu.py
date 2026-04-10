@@ -5,7 +5,7 @@ Redesigned with figlet-style banner, hotkey grid, and recent save panel.
 
 from __future__ import annotations
 
-from hoops_sim.tui.base import Screen, console
+from hoops_sim.tui.base import Screen
 from hoops_sim.tui.theme import BANNER_GRADIENT
 
 # Figlet-style banner with gradient coloring

@@ -20,7 +20,7 @@ from hoops_sim.narration.engine import NarrationEngine, NarrationEvent, Narratio
 from hoops_sim.psychology.momentum import MomentumTracker
 from hoops_sim.season.schedule import ScheduledGame, SeasonSchedule
 from hoops_sim.season.standings import Standings
-from hoops_sim.tui.base import Screen, console
+from hoops_sim.tui.base import Screen
 from hoops_sim.tui.widgets.broadcast_scoreboard import BroadcastScoreboard
 from hoops_sim.tui.widgets.context_strip import ContextStrip
 from hoops_sim.tui.widgets.court_map import CourtMap
@@ -156,12 +156,9 @@ class LiveGameScreen(Screen):
             self._refresh_widgets()
 
             if self._tick_delay > 0 and self._tick_count % 50 == 0:
-                console.clear()
-                console.print(self.render())
+                pass  # curses app handles refresh
 
         self._on_game_end()
-        console.clear()
-        console.print(self.render())
 
     def _run_game(self) -> None:
         """Alias for run_game used by instant sim."""

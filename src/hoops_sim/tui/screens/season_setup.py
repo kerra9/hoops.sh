@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from hoops_sim.tui.base import Screen, console
+from hoops_sim.tui.base import Screen
 
 
 class SeasonSetupScreen(Screen):
@@ -49,7 +49,7 @@ class SeasonSetupScreen(Screen):
         from hoops_sim.tui.screens.league_hub import LeagueHubScreen
         from hoops_sim.utils.rng import SeededRNG
 
-        console.print("Generating league...")
+        # Generation happens synchronously
 
         rng = SeededRNG(seed=self._seed)
         league = generate_league(num_teams=self._num_teams, rng=rng)
