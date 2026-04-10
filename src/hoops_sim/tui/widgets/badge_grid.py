@@ -10,13 +10,14 @@ from textual.widget import Widget
 from textual.widgets import Label
 
 from hoops_sim.models.badges import BADGE_DEFINITIONS, BadgeTier
+from hoops_sim.tui.theme import BADGE_BRONZE, BADGE_GOLD, BADGE_HOF, BADGE_SILVER
 
-# Badge tier colors: bronze -> silver -> gold -> purple (HOF)
+# Badge tier colors
 TIER_COLORS = {
-    BadgeTier.BRONZE: "#cd7f32",
-    BadgeTier.SILVER: "#c0c0c0",
-    BadgeTier.GOLD: "#ffd700",
-    BadgeTier.HALL_OF_FAME: "#9b59b6",
+    BadgeTier.BRONZE: BADGE_BRONZE,
+    BadgeTier.SILVER: BADGE_SILVER,
+    BadgeTier.GOLD: BADGE_GOLD,
+    BadgeTier.HALL_OF_FAME: BADGE_HOF,
 }
 
 TIER_LABELS = {
@@ -28,9 +29,9 @@ TIER_LABELS = {
 
 
 class BadgeGrid(Widget):
-    """Grid display of player badges with tier-based coloring.
+    """Compact grid display of player badges with tier-based coloring.
 
-    Shows each badge the player has with color indicating the tier.
+    Shows each badge with a tier-letter prefix colored by tier.
     """
 
     DEFAULT_CSS = """
@@ -39,8 +40,8 @@ class BadgeGrid(Widget):
         width: 100%;
         layout: grid;
         grid-size: 3;
-        grid-gutter: 1;
-        padding: 1;
+        grid-gutter: 0 1;
+        padding: 0;
     }
     """
 

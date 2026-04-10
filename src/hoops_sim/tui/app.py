@@ -14,7 +14,15 @@ class HoopsApp(App):
 
     TITLE = "hoops.sh"
     SUB_TITLE = "Maximum Fidelity Basketball Simulator"
-    CSS_PATH = "styles.tcss"
+    CSS_PATH = [
+        "styles/base.tcss",
+        "styles/scoreboard.tcss",
+        "styles/court.tcss",
+        "styles/tables.tcss",
+        "styles/cards.tcss",
+        "styles/widgets.tcss",
+        "styles/screens.tcss",
+    ]
 
     BINDINGS = [
         Binding("q", "quit", "Quit", show=True),

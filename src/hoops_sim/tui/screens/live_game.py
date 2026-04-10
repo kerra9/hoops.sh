@@ -1,6 +1,8 @@
 """Live Game screen -- real-time play-by-play simulation.
 
-Now powered by the real GameSimulator instead of random dice rolls.
+Broadcast-style layout with court map, enhanced play-by-play,
+broadcast scoreboard, context strip, and mini box scores.
+Powered by the real GameSimulator with reactive widget updates.
 """
 
 from __future__ import annotations
@@ -11,7 +13,7 @@ from typing import Optional
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.screen import Screen
-from textual.widgets import Button, Footer, Header, Label
+from textual.widgets import Footer, Header, Label
 
 from hoops_sim.engine.game import GamePhase, GameState
 from hoops_sim.engine.simulator import GameSimulator, SimEvent
@@ -23,19 +25,23 @@ from hoops_sim.narration.engine import NarrationEngine, NarrationEvent, Narratio
 from hoops_sim.psychology.momentum import MomentumTracker
 from hoops_sim.season.schedule import ScheduledGame, SeasonSchedule
 from hoops_sim.season.standings import Standings
-from hoops_sim.tui.widgets.game_clock import GameClockDisplay
+from hoops_sim.tui.widgets.broadcast_scoreboard import BroadcastScoreboard
+from hoops_sim.tui.widgets.context_strip import ContextStrip
+from hoops_sim.tui.widgets.court_map import CourtMap
 from hoops_sim.tui.widgets.mini_box_score import MiniBoxScore
-from hoops_sim.tui.widgets.momentum_bar import MomentumBar
 from hoops_sim.tui.widgets.play_by_play import PlayByPlay
-from hoops_sim.tui.widgets.scoreboard import Scoreboard
 from hoops_sim.utils.rng import SeededRNG
 
 
 class LiveGameScreen(Screen):
     """The main event: real-time play-by-play simulation.
 
-    Runs the GameSimulator and renders game state in real time with
-    play-by-play narration, live scoreboard, and mini box scores.
+    Broadcast-style layout with:
+    - Top: BroadcastScoreboard (quarter, clock, shot clock, scores)
+    - Middle: CourtMap | PlayByPlay | MiniBoxScores
+    - Bottom: ContextStrip (momentum, play, possession, fouls)
+
+    Uses reactive widget updates for 10Hz performance.
     """
 
     BINDINGS = [
@@ -71,6 +77,7 @@ class LiveGameScreen(Screen):
         self._tick_delay = 0.1  # seconds between ticks
         self._game_over = False
         self._sim_task: Optional[asyncio.Task] = None  # type: ignore[type-arg]
+        self._tick_count = 0
 
         # Create the real GameSimulator
         if home_team and away_team:
@@ -90,41 +97,39 @@ class LiveGameScreen(Screen):
             self._game_state = self._simulator.game_state
             self._momentum = self._simulator.momentum
         else:
-            self._home_stats = TeamGameStats(
-                team_id=0, team_name="Home",
-            )
-            self._away_stats = TeamGameStats(
-                team_id=0, team_name="Away",
-            )
+            self._home_stats = TeamGameStats(team_id=0, team_name="Home")
+            self._away_stats = TeamGameStats(team_id=0, team_name="Away")
             self._game_state = GameState()
             self._momentum = MomentumTracker()
 
     def compose(self) -> ComposeResult:
         home_name = self._home_team.full_name if self._home_team else "Home"
         away_name = self._away_team.full_name if self._away_team else "Away"
+        home_abbr = self._home_team.abbreviation if self._home_team else "HME"
+        away_abbr = self._away_team.abbreviation if self._away_team else "AWY"
 
         yield Header()
         with Vertical(id="live-game"):
-            # Top: clock + scoreboard
-            with Horizontal(id="live-game-top"):
-                yield GameClockDisplay(
-                    quarter=self._game_state.clock.quarter,
-                    game_clock=self._game_state.clock.display,
-                    shot_clock=self._game_state.clock.shot_clock_display,
-                    id="game-clock",
-                )
-                yield Scoreboard(
-                    home_name=home_name,
-                    away_name=away_name,
-                    home_score=self._game_state.score.home,
-                    away_score=self._game_state.score.away,
-                    id="game-scoreboard",
-                )
+            # Top: Broadcast scoreboard strip
+            yield BroadcastScoreboard(
+                home_name=home_name,
+                away_name=away_name,
+                home_abbr=home_abbr,
+                away_abbr=away_abbr,
+                id="game-scoreboard",
+            )
 
-            # Middle: play-by-play + stats
+            # Middle: Court map | Play-by-play | Box scores
             with Horizontal(id="live-game-middle"):
+                # Left: Court map
+                with Vertical(id="live-game-court-panel"):
+                    yield CourtMap(id="game-court")
+
+                # Center: Play-by-play
                 with Vertical(id="live-game-play-by-play"):
                     yield PlayByPlay(id="game-pbp")
+
+                # Right: Mini box scores
                 with Vertical(id="live-game-stats"):
                     yield MiniBoxScore(
                         team_name=home_name,
@@ -137,16 +142,15 @@ class LiveGameScreen(Screen):
                         id="away-box",
                     )
 
-            # Bottom: momentum + controls
-            with Horizontal(id="live-game-bottom"):
-                yield MomentumBar(
-                    value=self._momentum.value,
-                    home_name=home_name[:8],
-                    away_name=away_name[:8],
-                    id="game-momentum",
+            # Bottom: Context strip (momentum, play, possession, fouls)
+            with Vertical(id="live-game-bottom"):
+                yield ContextStrip(
+                    home_name=home_name,
+                    away_name=away_name,
+                    id="game-context",
                 )
                 yield Label(
-                    " [Space] Pause  [F] Fast  [S] Slow  [I] Instant  [Q] End",
+                    " [Space] Pause  [F] Fast  [S] Slow  [I] Instant  [B] Box  [Q] End",
                     id="live-game-controls",
                 )
         yield Footer()
@@ -176,6 +180,7 @@ class LiveGameScreen(Screen):
 
             # Step the simulator one tick
             events = self._simulator.step()
+            self._tick_count += 1
 
             # Process events for the UI
             for sim_event in events:
@@ -229,19 +234,25 @@ class LiveGameScreen(Screen):
                 same_conf = self._home_team.conference == self._away_team.conference
                 same_div = self._home_team.division == self._away_team.division
                 self._standings.record_game(
-                    self._home_team.id, self._away_team.id,
-                    gs.score.home, gs.score.away,
+                    self._home_team.id,
+                    self._away_team.id,
+                    gs.score.home,
+                    gs.score.away,
                     is_home_win=gs.score.home > gs.score.away,
-                    is_conference=same_conf, is_division=same_div,
+                    is_conference=same_conf,
+                    is_division=same_div,
                 )
 
     def _refresh_widgets(self) -> None:
-        """Update all live game widgets."""
+        """Update all live game widgets efficiently using reactive properties."""
         gs = self._game_state
 
+        # Update broadcast scoreboard
         try:
-            clock = self.query_one("#game-clock", GameClockDisplay)
-            clock.update_clock(
+            scoreboard = self.query_one("#game-scoreboard", BroadcastScoreboard)
+            scoreboard.update_state(
+                home_score=gs.score.home,
+                away_score=gs.score.away,
                 quarter=gs.clock.quarter,
                 game_clock=gs.clock.display,
                 shot_clock=gs.clock.shot_clock_display,
@@ -250,29 +261,52 @@ class LiveGameScreen(Screen):
         except Exception:
             pass
 
+        # Update context strip
         try:
-            scoreboard = self.query_one("#game-scoreboard", Scoreboard)
-            scoreboard.update_score(gs.score.home, gs.score.away)
+            context = self.query_one("#game-context", ContextStrip)
+            context.update_context(
+                momentum=self._momentum.value,
+            )
         except Exception:
             pass
 
+        # Update court map with player positions (if available)
         try:
-            momentum = self.query_one("#game-momentum", MomentumBar)
-            momentum.update_momentum(self._momentum.value)
+            court = self.query_one("#game-court", CourtMap)
+            # Extract player positions from court state if available
+            if hasattr(gs, "court_state") and gs.court_state is not None:
+                cs = gs.court_state
+                offense = [
+                    (p.position.x, p.position.y)
+                    for p in cs.offensive_players
+                ]
+                defense = [
+                    (p.position.x, p.position.y)
+                    for p in cs.defensive_players
+                ]
+                court.update_positions(
+                    offense=offense,
+                    defense=defense,
+                    ball_carrier=cs.ball_handler_index,
+                )
+            else:
+                court.tick_counter = self._tick_count
         except Exception:
             pass
 
-        try:
-            home_box = self.query_one("#home-box", MiniBoxScore)
-            home_box.update_stats(list(self._home_stats.player_stats.values()))
-        except Exception:
-            pass
+        # Update mini box scores every 5 ticks for performance
+        if self._tick_count % 5 == 0:
+            try:
+                home_box = self.query_one("#home-box", MiniBoxScore)
+                home_box.update_stats(list(self._home_stats.player_stats.values()))
+            except Exception:
+                pass
 
-        try:
-            away_box = self.query_one("#away-box", MiniBoxScore)
-            away_box.update_stats(list(self._away_stats.player_stats.values()))
-        except Exception:
-            pass
+            try:
+                away_box = self.query_one("#away-box", MiniBoxScore)
+                away_box.update_stats(list(self._away_stats.player_stats.values()))
+            except Exception:
+                pass
 
     def action_toggle_pause(self) -> None:
         """Toggle pause/resume."""

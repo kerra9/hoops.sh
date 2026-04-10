@@ -1,4 +1,7 @@
-"""Settings screen for sim speed, narration verbosity, display preferences."""
+"""Settings screen for sim speed, narration verbosity, display preferences.
+
+Redesigned with grouped settings sections and toggle switches.
+"""
 
 from __future__ import annotations
 
@@ -9,7 +12,13 @@ from textual.widgets import Button, Footer, Header, Label, Select, Switch
 
 
 class SettingsScreen(Screen):
-    """Settings for sim speed and display preferences."""
+    """Settings for sim speed and display preferences.
+
+    Features:
+    - Grouped settings in sections
+    - Select widgets for sim speed and narration
+    - Toggle switches for auto-save and other options
+    """
 
     BINDINGS = [
         ("escape", "go_back", "Back"),
@@ -19,8 +28,11 @@ class SettingsScreen(Screen):
         yield Header()
         with Center(id="settings-screen"):
             with Vertical(id="settings-form"):
-                yield Label("Settings", id="settings-title")
+                yield Label("[bold]Settings[/]", id="settings-title")
+
+                # Simulation section
                 yield Label("")
+                yield Label("[bold green]SIMULATION[/]")
                 yield Label("Sim Speed (ms between ticks):")
                 yield Select(
                     [
@@ -33,7 +45,10 @@ class SettingsScreen(Screen):
                     value=100,
                     id="sim-speed",
                 )
+
+                # Display section
                 yield Label("")
+                yield Label("[bold blue]DISPLAY[/]")
                 yield Label("Narration Verbosity:")
                 yield Select(
                     [
@@ -44,6 +59,13 @@ class SettingsScreen(Screen):
                     value="normal",
                     id="narration-verbosity",
                 )
+
+                # Auto-save section
+                yield Label("")
+                yield Label("[bold yellow]AUTO-SAVE[/]")
+                yield Label("Auto-save after each game:")
+                yield Switch(value=True, id="auto-save-switch")
+
                 yield Label("")
                 yield Button("Back", id="btn-back", variant="default")
         yield Footer()

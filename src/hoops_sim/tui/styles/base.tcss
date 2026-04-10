@@ -1,0 +1,57 @@
+/* hoops.sh base theme -- dark terminal aesthetic */
+
+Screen {
+    background: $surface;
+}
+
+/* Common layout helpers */
+.screen-header {
+    height: 3;
+    dock: top;
+    background: $primary-background;
+    text-align: center;
+    text-style: bold;
+    padding: 1;
+}
+
+.back-button {
+    dock: top;
+    width: auto;
+    margin: 0 0 0 1;
+}
+
+.conference-header {
+    text-style: bold;
+    color: $success;
+    margin: 1 0 0 1;
+}
+
+.section-title {
+    text-style: bold;
+    color: $text;
+    margin: 1 0 0 0;
+}
+
+.panel-border {
+    border: tall $primary;
+    padding: 1;
+}
+
+.dense-label {
+    height: 1;
+}
+
+/* Hotkey footer style */
+.hotkey-bar {
+    dock: bottom;
+    height: 1;
+    background: $primary-background;
+    color: $text;
+    text-align: center;
+    padding: 0 1;
+}
+
+.hotkey-key {
+    color: $success;
+    text-style: bold;
+}
