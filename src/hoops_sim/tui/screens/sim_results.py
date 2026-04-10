@@ -1,11 +1,19 @@
-"""Sim Results screen -- summary of all games simulated in a day."""
+"""Sim Results screen -- summary of all games simulated in a day.
+
+Textual Screen with DataTable showing game results.
+"""
 
 from __future__ import annotations
 
 from typing import Dict, List
 
+from textual.app import ComposeResult
+from textual.binding import Binding
+from textual.containers import VerticalScroll
+from textual.screen import Screen
+from textual.widgets import DataTable, Footer, Header, Static
+
 from hoops_sim.season.schedule import ScheduledGame
-from hoops_sim.tui.base import Screen
 from hoops_sim.tui.theme import SCORE_GREEN, SCORE_RED
 
 
@@ -13,8 +21,8 @@ class SimResultsScreen(Screen):
     """Summary of all games simulated in a day."""
 
     BINDINGS = [
-        ("escape", "go_back", "Back"),
-        ("enter", "go_back", "Continue"),
+        Binding("escape", "go_back", "Back", show=True),
+        Binding("enter", "go_back", "Continue"),
     ]
 
     def __init__(
@@ -30,50 +38,39 @@ class SimResultsScreen(Screen):
         self._day = day
         self._user_team_id = user_team_id
 
-    def render(self) -> str:
-        lines = [f"[bold]Day {self._day} Results[/]", ""]
+    def compose(self) -> ComposeResult:
+        yield Header()
+        with VerticalScroll(id="sim-results"):
+            yield Static(f"[bold]Day {self._day} Results[/]", markup=True)
 
-        for game in self._games:
-            if game.played:
-                away_name = self._team_names.get(
-                    game.away_team_id, f"Team {game.away_team_id}"
-                )
-                home_name = self._team_names.get(
-                    game.home_team_id, f"Team {game.home_team_id}"
-                )
+            table = DataTable(id="results-table")
+            table.add_columns("Away", "Score", "Home", "Score", "Result")
 
-                if self._user_team_id:
-                    if game.home_team_id == self._user_team_id:
-                        color = (
-                            SCORE_GREEN
-                            if game.home_score > game.away_score
-                            else SCORE_RED
-                        )
-                    elif game.away_team_id == self._user_team_id:
-                        color = (
-                            SCORE_GREEN
-                            if game.away_score > game.home_score
-                            else SCORE_RED
-                        )
+            for game in self._games:
+                if game.played:
+                    away_name = self._team_names.get(
+                        game.away_team_id, f"Team {game.away_team_id}"
+                    )
+                    home_name = self._team_names.get(
+                        game.home_team_id, f"Team {game.home_team_id}"
+                    )
+
+                    if game.home_score > game.away_score:
+                        result = f"{home_name[:12]} W"
                     else:
-                        color = "#cccccc"
-                else:
-                    color = "#cccccc"
+                        result = f"{away_name[:12]} W"
 
-                lines.append(
-                    f"  [{color}]{away_name:<20} {game.away_score:>3}"
-                    f"  -  "
-                    f"{game.home_score:<3} {home_name}[/]"
-                )
+                    table.add_row(
+                        away_name[:16],
+                        str(game.away_score),
+                        home_name[:16],
+                        str(game.home_score),
+                        result,
+                    )
 
-        lines.append("")
-        lines.append("  [bold green][C][/] Continue")
-        return "\n".join(lines)
-
-    def handle_input(self, choice: str) -> None:
-        c = choice.strip().lower()
-        if c in ("c", "b", ""):
-            self.action_go_back()
+            yield table
+            yield Static("\nPress [bold]Enter[/] or [bold]Escape[/] to continue", markup=True)
+        yield Footer()
 
     def action_go_back(self) -> None:
         self.app.pop_screen()

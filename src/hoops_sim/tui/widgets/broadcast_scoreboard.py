@@ -1,15 +1,29 @@
-"""TV-style broadcast scoreboard strip for the live game screen."""
+"""TV-style broadcast scoreboard strip for the live game screen.
+
+Textual widget with reactive properties that auto-update on data change.
+"""
 
 from __future__ import annotations
 
-from hoops_sim.tui.base import Widget
+from rich.text import Text
+from textual.reactive import reactive
+from textual.widget import Widget
 
 
 class BroadcastScoreboard(Widget):
     """TV-style scoreboard: quarter, clock, shot clock, team names, scores.
 
     Single horizontal strip optimized for the top of the live game screen.
+    Uses Textual reactive properties for automatic re-rendering.
     """
+
+    home_score: reactive[int] = reactive(0)
+    away_score: reactive[int] = reactive(0)
+    quarter: reactive[int] = reactive(1)
+    game_clock: reactive[str] = reactive("12:00.0")
+    shot_clock: reactive[str] = reactive("24")
+    is_overtime: reactive[bool] = reactive(False)
+    possession_home: reactive[bool] = reactive(True)
 
     def __init__(
         self,
@@ -17,38 +31,34 @@ class BroadcastScoreboard(Widget):
         away_name: str = "AWAY",
         home_abbr: str = "HME",
         away_abbr: str = "AWY",
-        *,
-        name: str | None = None,
-        id: str | None = None,
-        classes: str | None = None,
+        **kwargs,
     ) -> None:
-        super().__init__(name=name, id=id, classes=classes)
+        super().__init__(**kwargs)
         self._home_name = home_name
         self._away_name = away_name
         self._home_abbr = home_abbr
         self._away_abbr = away_abbr
-        self.home_score = 0
-        self.away_score = 0
-        self.quarter = 1
-        self.game_clock = "12:00.0"
-        self.shot_clock = "24"
-        self.is_overtime = False
-        self.possession_home = True
 
-    def render(self) -> str:
-        """Build the full scoreboard string."""
+    def render(self) -> Text:
+        """Build the full scoreboard as a Rich Text object."""
         period = (
             f"OT{self.quarter - 4}" if self.is_overtime else f"Q{self.quarter}"
         )
         poss_arrow = "\u25b6" if self.possession_home else "\u25c0"
-        return (
-            f"  {period} | "
-            f"[bold]{self.game_clock}[/] | "
-            f"Shot: [yellow]{self.shot_clock}[/]  "
-            f"   {self._away_abbr} [bold]{self.away_score:>3}[/]"
-            f"  {poss_arrow}  "
-            f"[bold]{self.home_score:<3}[/] {self._home_abbr}"
-        )
+
+        text = Text()
+        text.append(f"  {period}", style="bold dim")
+        text.append(" | ")
+        text.append(self.game_clock, style="bold")
+        text.append(" | Shot: ")
+        text.append(self.shot_clock, style="bold yellow")
+        text.append("   ")
+        text.append(f"{self._away_abbr} ", style="bold")
+        text.append(f"{self.away_score:>3}", style="bold white")
+        text.append(f"  {poss_arrow}  ")
+        text.append(f"{self.home_score:<3}", style="bold white")
+        text.append(f" {self._home_abbr}", style="bold")
+        return text
 
     def update_state(
         self,

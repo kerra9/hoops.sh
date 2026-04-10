@@ -1,8 +1,13 @@
-"""Large styled final score display."""
+"""Large styled final score display.
+
+Textual widget using Rich Text for the post-game final score.
+"""
 
 from __future__ import annotations
 
-from hoops_sim.tui.base import Widget
+from rich.text import Text
+from textual.widget import Widget
+
 from hoops_sim.tui.theme import SCORE_GREEN
 
 
@@ -15,22 +20,19 @@ class FinalScoreDisplay(Widget):
         away_name: str = "Away",
         home_score: int = 0,
         away_score: int = 0,
-        *,
-        name: str | None = None,
-        id: str | None = None,
-        classes: str | None = None,
+        **kwargs,
     ) -> None:
-        super().__init__(name=name, id=id, classes=classes)
+        super().__init__(**kwargs)
         self._home_name = home_name
         self._away_name = away_name
         self._home_score = home_score
         self._away_score = away_score
 
-    def render(self) -> str:
-        away_style = f"[bold][{SCORE_GREEN}]" if self._away_score > self._home_score else "[bold]"
-        home_style = f"[bold][{SCORE_GREEN}]" if self._home_score > self._away_score else "[bold]"
-        return (
-            f"[bold]F I N A L[/]\n\n"
-            f"  {away_style}{self._away_name:<24} {self._away_score:>3}[/]\n"
-            f"  {home_style}{self._home_name:<24} {self._home_score:>3}[/]"
-        )
+    def render(self) -> Text:
+        text = Text()
+        text.append("F I N A L\n\n", style="bold")
+        away_style = f"bold {SCORE_GREEN}" if self._away_score > self._home_score else "bold"
+        home_style = f"bold {SCORE_GREEN}" if self._home_score > self._away_score else "bold"
+        text.append(f"  {self._away_name:<24} {self._away_score:>3}\n", style=away_style)
+        text.append(f"  {self._home_name:<24} {self._home_score:>3}", style=home_style)
+        return text

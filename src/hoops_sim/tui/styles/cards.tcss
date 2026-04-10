@@ -1,79 +1,32 @@
-/* Player card, team dashboard styles */
+/* Player card and info card styles */
 
-/* Player Card */
-#player-card {
-    layout: vertical;
-    height: 100%;
-}
-
-#player-card-header {
-    height: 5;
-    dock: top;
-    background: $primary-background;
-    padding: 1;
-}
-
-#player-card-body {
-    layout: horizontal;
-    height: 1fr;
-}
-
-#player-card-left {
-    width: 1fr;
-    padding: 1;
-}
-
-#player-card-right {
-    width: 1fr;
-    padding: 1;
-}
-
-/* Team Dashboard */
-#team-dashboard {
-    layout: vertical;
-    height: 100%;
-}
-
-#team-header {
-    height: 3;
-    dock: top;
-    background: $primary-background;
-    text-align: center;
+.player-header {
+    height: auto;
     text-style: bold;
     padding: 1;
+    border: tall $primary;
+    margin-bottom: 1;
 }
 
-/* Salary Cap Bar */
-.salary-cap-bar {
-    height: 3;
-    padding: 0 1;
-}
-
-/* Depth Chart */
-.depth-chart {
-    width: 100%;
+.player-attributes {
     height: auto;
     padding: 1;
+    border: tall $primary;
 }
 
-.depth-chart-row {
-    height: 1;
-    layout: horizontal;
+.player-badges {
+    height: auto;
+    padding: 1;
+    border: tall $primary;
 }
 
-.depth-chart-pos {
-    width: 6;
-    text-style: bold;
-    color: $success;
+.player-tendencies {
+    height: auto;
+    padding: 1;
+    border: tall $primary;
 }
 
-.depth-chart-players {
-    width: 1fr;
-}
-
-/* Team Stats Panel */
-.team-stats-panel {
-    width: 100%;
+.player-condition {
     height: auto;
     padding: 1;
     border: tall $primary;

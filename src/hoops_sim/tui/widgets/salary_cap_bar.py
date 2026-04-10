@@ -1,63 +1,51 @@
-"""Visual salary cap / luxury tax / apron thresholds."""
+"""Salary cap visualization widget.
+
+Textual widget for displaying team salary cap status.
+"""
 
 from __future__ import annotations
 
-from hoops_sim.models.league import SalaryCapInfo
-from hoops_sim.tui.base import Widget
+from rich.text import Text
+from textual.widget import Widget
 
-
-def _format_money(amount: int) -> str:
-    """Format salary as $XXM."""
-    return f"${amount / 1_000_000:.1f}M"
+from hoops_sim.tui.theme import SCORE_GREEN, SCORE_RED, ACCENT_WARNING
 
 
 class SalaryCapBar(Widget):
-    """Visual salary cap bar showing payroll vs cap thresholds."""
+    """Salary cap bar showing payroll vs cap."""
 
     def __init__(
         self,
-        payroll: int = 0,
-        cap_info: SalaryCapInfo | None = None,
-        *,
-        name: str | None = None,
-        id: str | None = None,
-        classes: str | None = None,
+        payroll: float = 0.0,
+        cap_info=None,
+        **kwargs,
     ) -> None:
-        super().__init__(name=name, id=id, classes=classes)
+        super().__init__(**kwargs)
         self._payroll = payroll
-        self._cap = cap_info or SalaryCapInfo()
+        self._cap_info = cap_info
 
-    def render(self) -> str:
-        cap = self._cap
-        payroll = self._payroll
+    def render(self) -> Text:
+        text = Text()
+        text.append("SALARY CAP\n", style="bold")
 
-        if payroll > cap.second_apron:
-            color = "#e74c3c"
-            status = "ABOVE 2ND APRON"
-        elif payroll > cap.first_apron:
-            color = "#e67e22"
-            status = "Above 1st Apron"
-        elif payroll > cap.luxury_tax_threshold:
-            color = "#f1c40f"
-            status = "Luxury Tax"
-        elif payroll > cap.salary_cap:
-            color = "#3498db"
-            status = "Over Cap"
+        cap = 140_000_000.0
+        if self._cap_info and hasattr(self._cap_info, "cap"):
+            cap = self._cap_info.cap
+
+        pct = self._payroll / cap if cap > 0 else 0.0
+        bar_len = 20
+        filled = int(pct * bar_len)
+        filled = max(0, min(bar_len, filled))
+
+        if pct > 1.0:
+            color = SCORE_RED
+        elif pct > 0.85:
+            color = ACCENT_WARNING
         else:
-            color = "#2ecc71"
-            status = "Under Cap"
+            color = SCORE_GREEN
 
-        max_val = cap.second_apron + 20_000_000
-        bar_len = 30
-        fill_len = min(bar_len, int(payroll / max_val * bar_len))
-        filled = "\u2588" * fill_len
-        empty = "\u2591" * (bar_len - fill_len)
-        bar = f"[{color}]{filled}[/]{empty}"
-
-        return (
-            f"Payroll: {_format_money(payroll)}  [{color}]{status}[/]\n"
-            f"{bar}\n"
-            f"Cap: {_format_money(cap.salary_cap)}  "
-            f"Tax: {_format_money(cap.luxury_tax_threshold)}  "
-            f"Apron: {_format_money(cap.first_apron)}"
-        )
+        bar = "\u2588" * filled + "\u2591" * (bar_len - filled)
+        text.append(f"  ")
+        text.append(bar, style=color)
+        text.append(f" ${self._payroll / 1_000_000:.1f}M / ${cap / 1_000_000:.0f}M")
+        return text

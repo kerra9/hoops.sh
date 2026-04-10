@@ -1,14 +1,20 @@
-"""Post-Game Summary screen -- final score, leaders, notable performances."""
+"""Post-Game Summary screen -- final score, leaders, notable performances.
+
+Textual Screen with composed widgets for the end-of-game summary.
+"""
 
 from __future__ import annotations
 
-from typing import Optional
+from textual.app import ComposeResult
+from textual.binding import Binding
+from textual.containers import Center, Vertical
+from textual.screen import Screen
+from textual.widgets import Button, Footer, Header, Static
 
 from hoops_sim.models.league import League
 from hoops_sim.models.stats import TeamGameStats
 from hoops_sim.season.schedule import SeasonSchedule
 from hoops_sim.season.standings import Standings
-from hoops_sim.tui.base import Screen
 from hoops_sim.tui.widgets.final_score import FinalScoreDisplay
 from hoops_sim.tui.widgets.game_leaders import GameLeadersPanel
 
@@ -17,9 +23,10 @@ class PostGameScreen(Screen):
     """Final score, top performers, game log highlights."""
 
     BINDINGS = [
-        ("escape", "continue_game", "Continue"),
-        ("enter", "continue_game", "Continue"),
-        ("b", "box_score", "Box Score"),
+        Binding("escape", "continue_game", "Continue", show=True),
+        Binding("enter", "continue_game", "Continue"),
+        Binding("b", "box_score", "Box Score", show=True),
+        Binding("c", "continue_game", "Continue"),
     ]
 
     def __init__(
@@ -47,24 +54,34 @@ class PostGameScreen(Screen):
         self._standings = standings
         self._seed = seed
 
-    def render(self) -> str:
-        lines = []
+    def compose(self) -> ComposeResult:
+        yield Header()
+        with Center():
+            with Vertical(id="post-game-content"):
+                yield FinalScoreDisplay(
+                    home_name=self._home_name,
+                    away_name=self._away_name,
+                    home_score=self._home_score,
+                    away_score=self._away_score,
+                )
 
-        # Final score
-        fsd = FinalScoreDisplay(
-            home_name=self._home_name,
-            away_name=self._away_name,
-            home_score=self._home_score,
-            away_score=self._away_score,
-        )
-        lines.append(fsd.render())
-        lines.append("")
+                # Build leaders
+                all_stats = list(self._home_stats.player_stats.values()) + list(
+                    self._away_stats.player_stats.values()
+                )
+                leaders = self._build_leaders(all_stats)
+                yield GameLeadersPanel(leaders=leaders)
 
-        # Game leaders
-        all_stats = list(self._home_stats.player_stats.values()) + list(
-            self._away_stats.player_stats.values()
-        )
+                # Notable performances
+                notable_text = self._build_notable(all_stats)
+                yield Static(notable_text, markup=True)
 
+                with Vertical():
+                    yield Button("Box Score", variant="primary", id="btn-box-score")
+                    yield Button("Continue", variant="success", id="btn-continue")
+        yield Footer()
+
+    def _build_leaders(self, all_stats):
         leaders = []
         top_pts = max(all_stats, key=lambda s: s.points, default=None)
         if top_pts:
@@ -84,13 +101,10 @@ class PostGameScreen(Screen):
         top_3pm = max(all_stats, key=lambda s: s.three_pm, default=None)
         if top_3pm:
             leaders.append(("3PM", top_3pm.player_name, str(top_3pm.three_pm)))
+        return leaders
 
-        glp = GameLeadersPanel(leaders=leaders)
-        lines.append(glp.render())
-        lines.append("")
-
-        # Notable performances
-        lines.append("[bold]NOTABLE[/]")
+    def _build_notable(self, all_stats) -> str:
+        lines = ["[bold]NOTABLE[/]"]
         has_notable = False
         for ps in all_stats:
             if ps.is_triple_double():
@@ -105,24 +119,16 @@ class PostGameScreen(Screen):
                     f"  [bold]Double-double:[/] "
                     f"{ps.player_name} ({ps.stat_line()})"
                 )
-
         if not has_notable:
             top_scorers = sorted(all_stats, key=lambda s: s.points, reverse=True)[:3]
             for ps in top_scorers:
                 lines.append(f"  {ps.player_name}: {ps.stat_line()}")
-
-        lines.append("")
-        lines.append(
-            "  [bold blue][B][/] Box Score  "
-            "[bold green][C][/] Continue"
-        )
         return "\n".join(lines)
 
-    def handle_input(self, choice: str) -> None:
-        c = choice.strip().lower()
-        if c == "b":
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "btn-box-score":
             self.action_box_score()
-        elif c in ("c", ""):
+        elif event.button.id == "btn-continue":
             self.action_continue_game()
 
     def action_box_score(self) -> None:
@@ -138,7 +144,6 @@ class PostGameScreen(Screen):
         )
 
     def action_continue_game(self) -> None:
-        """Return to league hub or main menu."""
         if self._league and self._schedule and self._standings:
             from hoops_sim.tui.screens.league_hub import LeagueHubScreen
 

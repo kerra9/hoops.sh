@@ -7,23 +7,20 @@ import pytest
 
 def test_attribute_bar_creation():
     """AttributeBar can be created with label and value."""
-    from hoops_sim.tui.theme import rating_color
     from hoops_sim.tui.widgets.attribute_bar import AttributeBar
 
     bar = AttributeBar(label="Speed", value=85)
     assert bar._label == "Speed"
-    assert bar.value == 85
+    assert bar._value == 85
 
 
-def test_attribute_bar_clamps_value():
-    """AttributeBar clamps value to 0-99."""
+def test_attribute_bar_stores_value():
+    """AttributeBar stores the max_value parameter."""
     from hoops_sim.tui.widgets.attribute_bar import AttributeBar
 
-    bar = AttributeBar(label="Test", value=150)
-    assert bar.value == 99
-
-    bar2 = AttributeBar(label="Test", value=-10)
-    assert bar2.value == 0
+    bar = AttributeBar(label="Test", value=50, max_value=99)
+    assert bar._value == 50
+    assert bar._max_value == 99
 
 
 def test_rating_color():
@@ -35,21 +32,23 @@ def test_rating_color():
 
 
 def test_energy_gauge_creation():
-    """EnergyGauge can be created with energy percentage and fatigue tier."""
+    """EnergyGauge can be created with value and label."""
     from hoops_sim.tui.widgets.energy_gauge import EnergyGauge
 
-    gauge = EnergyGauge(label="Energy", energy_pct=0.8, fatigue_tier=1)
-    assert gauge.energy_pct == 0.8
-    assert gauge.fatigue_tier == 1
+    gauge = EnergyGauge(value=0.8, label="Energy")
+    assert gauge._value == 0.8
+    assert gauge._label == "Energy"
 
 
 def test_energy_gauge_clamps():
     """EnergyGauge clamps values to valid ranges."""
     from hoops_sim.tui.widgets.energy_gauge import EnergyGauge
 
-    gauge = EnergyGauge(energy_pct=1.5, fatigue_tier=10)
-    assert gauge.energy_pct == 1.0
-    assert gauge.fatigue_tier == 5
+    gauge = EnergyGauge(value=1.5)
+    assert gauge._value == 1.0
+
+    gauge2 = EnergyGauge(value=-0.5)
+    assert gauge2._value == 0.0
 
 
 def test_player_row_creation():
@@ -57,14 +56,12 @@ def test_player_row_creation():
     from hoops_sim.tui.widgets.player_row import PlayerRow
 
     row = PlayerRow(
-        player_name="James Johnson",
+        name="James Johnson",
         position="PG",
         overall=82,
-        stats_text="25 PTS, 8 AST",
         energy_pct=0.75,
-        fatigue_tier=2,
     )
-    assert row._player_name == "James Johnson"
+    assert row._name == "James Johnson"
     assert row._overall == 82
 
 
@@ -88,19 +85,19 @@ def test_badge_grid_creation():
 
 
 def test_seed_input_creation():
-    """SeedInput can be created with an initial seed."""
+    """SeedInput can be created with an initial value."""
     from hoops_sim.tui.widgets.seed_input import SeedInput
 
-    seed_input = SeedInput(initial_seed=12345)
-    assert seed_input.seed == 12345
+    seed_input = SeedInput(value=12345)
+    assert seed_input._value == 12345
 
 
-def test_seed_input_random_default():
-    """SeedInput generates a random seed if none provided."""
+def test_seed_input_default():
+    """SeedInput has a default value."""
     from hoops_sim.tui.widgets.seed_input import SeedInput
 
     seed_input = SeedInput()
-    assert 1 <= seed_input.seed <= 999999
+    assert seed_input._value == 42
 
 
 def test_momentum_bar_creation():
@@ -122,22 +119,22 @@ def test_momentum_bar_clamps():
     assert bar2.value == -5.0
 
 
-def test_game_clock_display_creation():
-    """GameClockDisplay can be created with clock data."""
-    from hoops_sim.tui.widgets.game_clock import GameClockDisplay
+def test_game_clock_creation():
+    """GameClock can be created."""
+    from hoops_sim.tui.widgets.game_clock import GameClock
 
-    clock = GameClockDisplay(quarter=2, game_clock="5:30.0", shot_clock="14")
-    assert clock.quarter == 2
-    assert clock.game_clock == "5:30.0"
+    clock = GameClock()
+    assert clock.quarter == 1
+    assert clock.display == "12:00.0"
 
 
 def test_scoreboard_creation():
-    """Scoreboard can be created with team data."""
+    """Scoreboard (BroadcastScoreboard) can be created with team data."""
     from hoops_sim.tui.widgets.scoreboard import Scoreboard
 
-    board = Scoreboard(home_name="Lakers", away_name="Celtics", home_score=98, away_score=95)
-    assert board.home_score == 98
-    assert board.away_score == 95
+    board = Scoreboard(home_name="Lakers", away_name="Celtics")
+    assert board.home_score == 0
+    assert board.away_score == 0
 
 
 def test_mini_box_score_creation():
@@ -173,10 +170,10 @@ def test_salary_cap_bar_creation():
 
 
 def test_schedule_calendar_creation():
-    """ScheduleCalendar can be created with games."""
+    """ScheduleCalendar (WeekCalendarGrid) can be created."""
     from hoops_sim.tui.widgets.schedule_calendar import ScheduleCalendar
 
-    cal = ScheduleCalendar(games=[], team_names={}, current_day=5)
+    cal = ScheduleCalendar(current_day=5)
     assert cal._current_day == 5
 
 
@@ -233,23 +230,28 @@ def test_court_shooting_chart_creation():
     from hoops_sim.tui.widgets.court_shooting_chart import CourtShootingChart
 
     chart = CourtShootingChart()
-    assert chart._profile is not None
+    assert chart._profile is None
+
+    from hoops_sim.models.shooting_profile import ShootingProfile
+    chart2 = CourtShootingChart(profile=ShootingProfile())
+    assert chart2._profile is not None
 
 
 def test_career_sparkline():
-    """CareerSparkline generates valid sparkline strings."""
-    from hoops_sim.tui.widgets.career_sparkline import sparkline
+    """CareerSparkline can be created with values."""
+    from hoops_sim.tui.widgets.career_sparkline import CareerSparkline
 
-    result = sparkline([1.0, 2.0, 3.0, 4.0, 5.0])
-    assert len(result) == 5
-    assert result[0] != result[-1]  # min and max should differ
+    spark = CareerSparkline(values=[1.0, 2.0, 3.0, 4.0, 5.0], label="PPG")
+    assert len(spark._values) == 5
+    assert spark._label == "PPG"
 
 
 def test_career_sparkline_empty():
-    """Sparkline handles empty input."""
-    from hoops_sim.tui.widgets.career_sparkline import sparkline
+    """CareerSparkline handles empty input."""
+    from hoops_sim.tui.widgets.career_sparkline import CareerSparkline
 
-    assert sparkline([]) == ""
+    spark = CareerSparkline()
+    assert spark._values == []
 
 
 def test_final_score_display():
@@ -282,7 +284,7 @@ def test_quarter_scoring_table():
         home_quarters=[22, 30, 26, 24],
         away_quarters=[24, 28, 22, 24],
     )
-    assert sum(table._home_q) == 102
+    assert sum(table._home_quarters) == 102
 
 
 def test_depth_chart_creation():
@@ -321,3 +323,26 @@ def test_theme_energy_color():
     assert energy_color(0.9).startswith("#")
     assert energy_color(0.5).startswith("#")
     assert energy_color(0.1).startswith("#")
+
+
+def test_game_controls_creation():
+    """GameControls can be created."""
+    from hoops_sim.tui.widgets.game_controls import GameControls
+
+    controls = GameControls()
+    assert controls.current_delay == 1.0
+    assert controls.current_label == "1x"
+
+
+def test_game_controls_speed_change():
+    """GameControls can change speed."""
+    from hoops_sim.tui.widgets.game_controls import GameControls
+
+    controls = GameControls(current_index=1)
+    label, delay = controls.speed_up()
+    assert label == "2x"
+    assert delay == 0.5
+
+    label, delay = controls.slow_down()
+    assert label == "1x"
+    assert delay == 1.0

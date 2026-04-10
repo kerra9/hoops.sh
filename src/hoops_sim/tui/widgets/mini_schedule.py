@@ -1,36 +1,34 @@
-"""Next games list widget for league hub."""
+"""Mini schedule showing upcoming games.
+
+Textual widget for the league hub's schedule preview.
+"""
 
 from __future__ import annotations
 
 from typing import List, Tuple
 
-from hoops_sim.tui.base import Widget
+from rich.text import Text
+from textual.widget import Widget
 
 
 class MiniSchedule(Widget):
-    """Upcoming games list showing next 5 games."""
+    """Compact upcoming game schedule."""
 
     def __init__(
         self,
         games: List[Tuple[int, str, str]] | None = None,
-        *,
-        name: str | None = None,
-        id: str | None = None,
-        classes: str | None = None,
+        **kwargs,
     ) -> None:
-        """Initialize with game tuples of (day, home_away_str, opponent_name)."""
-        super().__init__(name=name, id=id, classes=classes)
+        """Initialize with games as (day, ha_prefix, opponent_name)."""
+        super().__init__(**kwargs)
         self._games = games or []
 
-    def render(self) -> str:
-        lines = ["[bold]UPCOMING SCHEDULE[/]"]
-        if self._games:
-            for day, ha, opp in self._games[:5]:
-                lines.append(f"  Day {day:>3}: {ha} {opp}")
-        else:
-            lines.append("  [dim]Season complete[/]")
-        return "\n".join(lines)
-
-    def update_games(self, games: List[Tuple[int, str, str]]) -> None:
-        """Update the schedule list."""
-        self._games = games
+    def render(self) -> Text:
+        text = Text()
+        text.append("UPCOMING\n", style="bold")
+        if not self._games:
+            text.append("  No upcoming games", style="dim")
+            return text
+        for day, ha, opp in self._games[:5]:
+            text.append(f"  Day {day:>3}: {ha} {opp}\n")
+        return text

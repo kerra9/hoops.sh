@@ -9,7 +9,9 @@ description = "Maximum fidelity CLI basketball simulator"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.9"
-dependencies = []
+dependencies = [
+    "textual>=0.80",
+]
 
 [project.optional-dependencies]
 dev = [
@@ -17,6 +19,7 @@ dev = [
     "pytest-cov>=4.0",
     "ruff>=0.4",
     "mypy>=1.0",
+    "textual-dev>=1.0",
 ]
 
 [project.scripts]

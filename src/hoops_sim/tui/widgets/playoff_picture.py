@@ -1,56 +1,49 @@
-"""Compact playoff seeding strip."""
+"""Playoff picture strip widget.
+
+Textual widget showing playoff seeding status.
+"""
 
 from __future__ import annotations
 
 from typing import List
 
-from hoops_sim.tui.base import Widget
+from rich.text import Text
+from textual.widget import Widget
+
 from hoops_sim.tui.theme import PLAYOFF_IN, PLAYOFF_OUT, PLAYOFF_PLAYIN
 
 
 class PlayoffPictureStrip(Widget):
-    """Compact playoff seeding strip showing teams in/out.
-
-    Seeds 1-8 in green, 9-10 play-in yellow, rest red.
-    """
+    """Playoff seeding status strip."""
 
     def __init__(
         self,
         east_teams: List[str] | None = None,
         west_teams: List[str] | None = None,
-        *,
-        name: str | None = None,
-        id: str | None = None,
-        classes: str | None = None,
+        **kwargs,
     ) -> None:
-        """Initialize with lists of team abbreviations sorted by seed."""
-        super().__init__(name=name, id=id, classes=classes)
+        super().__init__(**kwargs)
         self._east = east_teams or []
         self._west = west_teams or []
 
-    def _format_conf(self, label: str, teams: List[str]) -> str:
-        """Format one conference line."""
-        parts = [f"{label}: "]
-        for i, team in enumerate(teams):
-            if i < 8:
-                parts.append(f"[{PLAYOFF_IN}]{team}[/] ")
+    def render(self) -> Text:
+        text = Text()
+        text.append("EAST: ")
+        for i, team in enumerate(self._east[:10]):
+            if i < 6:
+                color = PLAYOFF_IN
             elif i < 10:
-                parts.append(f"[{PLAYOFF_PLAYIN}]{team}[/] ")
+                color = PLAYOFF_PLAYIN
             else:
-                parts.append(f"[{PLAYOFF_OUT}]{team}[/] ")
-            if i == 7:
-                parts.append("| ")
-        return "".join(parts)
-
-    def render(self) -> str:
-        return (
-            self._format_conf("E", self._east) + "\n"
-            + self._format_conf("W", self._west)
-        )
-
-    def update_picture(
-        self, east_teams: List[str], west_teams: List[str]
-    ) -> None:
-        """Update the playoff picture."""
-        self._east = east_teams
-        self._west = west_teams
+                color = PLAYOFF_OUT
+            text.append(f"{team} ", style=color)
+        text.append("\nWEST: ")
+        for i, team in enumerate(self._west[:10]):
+            if i < 6:
+                color = PLAYOFF_IN
+            elif i < 10:
+                color = PLAYOFF_PLAYIN
+            else:
+                color = PLAYOFF_OUT
+            text.append(f"{team} ", style=color)
+        return text

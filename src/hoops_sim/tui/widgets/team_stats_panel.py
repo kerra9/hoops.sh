@@ -1,46 +1,24 @@
-"""Team OFF/DEF/NET rating panel with league ranks."""
+"""Team stats summary panel.
+
+Textual widget for displaying team aggregate statistics.
+"""
 
 from __future__ import annotations
 
-from hoops_sim.tui.base import Widget
-from hoops_sim.tui.theme import SCORE_GREEN, SCORE_RED
+from rich.text import Text
+from textual.widget import Widget
 
 
 class TeamStatsPanel(Widget):
-    """Team stats panel showing offensive/defensive/net ratings with ranks."""
+    """Team stats summary panel."""
 
-    def __init__(
-        self,
-        off_rtg: float = 0.0,
-        def_rtg: float = 0.0,
-        net_rtg: float = 0.0,
-        pace: float = 0.0,
-        off_rank: str = "",
-        def_rank: str = "",
-        net_rank: str = "",
-        *,
-        name: str | None = None,
-        id: str | None = None,
-        classes: str | None = None,
-    ) -> None:
-        super().__init__(name=name, id=id, classes=classes)
-        self._off_rtg = off_rtg
-        self._def_rtg = def_rtg
-        self._net_rtg = net_rtg
-        self._pace = pace
-        self._off_rank = off_rank
-        self._def_rank = def_rank
-        self._net_rank = net_rank
+    def __init__(self, stats=None, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self._stats = stats
 
-    def render(self) -> str:
-        off_rank_str = f" ({self._off_rank})" if self._off_rank else ""
-        def_rank_str = f" ({self._def_rank})" if self._def_rank else ""
-        net_rank_str = f" ({self._net_rank})" if self._net_rank else ""
-        net_color = SCORE_GREEN if self._net_rtg > 0 else SCORE_RED
-        return (
-            f"[bold]TEAM STATS[/]\n"
-            f"  OFF RTG: {self._off_rtg:.1f}{off_rank_str}\n"
-            f"  DEF RTG: {self._def_rtg:.1f}{def_rank_str}\n"
-            f"  NET RTG: [{net_color}]{self._net_rtg:+.1f}[/]{net_rank_str}\n"
-            f"  PACE:    {self._pace:.1f}"
-        )
+    def render(self) -> Text:
+        text = Text()
+        text.append("TEAM STATS\n", style="bold")
+        if not self._stats:
+            text.append("  No stats available yet", style="dim")
+        return text
