@@ -1,0 +1,41 @@
+/* Table styles -- DataTable overrides, box score, standings */
+
+/* Standings Table */
+.standings-table {
+    width: 100%;
+    height: auto;
+}
+
+/* Mini Box Score */
+.mini-box-score {
+    width: 100%;
+    height: auto;
+    border: tall $primary;
+    padding: 0 1;
+}
+
+/* Player Row */
+.player-row {
+    layout: horizontal;
+    height: 1;
+}
+
+.player-row-name {
+    width: 20;
+}
+
+.player-row-pos {
+    width: 4;
+    color: $text-muted;
+}
+
+.player-row-stats {
+    width: 1fr;
+}
+
+/* Quarter Scoring Table */
+.quarter-scoring {
+    width: 100%;
+    height: auto;
+    padding: 0 1;
+}

@@ -7,21 +7,21 @@ from textual.containers import Vertical
 from textual.widget import Widget
 from textual.widgets import Label
 
-from hoops_sim.tui.widgets.attribute_bar import _rating_color
+from hoops_sim.tui.theme import rating_color
 
 
 class AttributeRadar(Widget):
     """Text-based display of all 7 attribute category averages.
 
-    Shows a horizontal bar chart summarizing each category:
-    Shooting, Finishing, Playmaking, Defense, Rebounding, Athleticism, Mental.
+    Shows a horizontal bar chart summarizing each category with
+    color gradient based on rating value.
     """
 
     DEFAULT_CSS = """
     AttributeRadar {
         height: auto;
         width: 100%;
-        padding: 1;
+        padding: 0;
     }
     """
 
@@ -40,7 +40,7 @@ class AttributeRadar(Widget):
         with Vertical():
             for cat_name, value in self._categories.items():
                 bar_w = value // 5
-                color = _rating_color(value)
+                color = rating_color(value)
                 filled = "\u2588" * bar_w
                 empty = "\u2591" * (20 - bar_w)
                 yield Label(

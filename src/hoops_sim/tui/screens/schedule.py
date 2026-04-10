@@ -1,6 +1,11 @@
-"""Schedule screen -- calendar view of SeasonSchedule."""
+"""Schedule screen -- week calendar grid view of SeasonSchedule.
+
+Redesigned with weekly calendar grid and season progress bar.
+"""
 
 from __future__ import annotations
+
+from typing import Optional, Tuple
 
 from textual.app import ComposeResult
 from textual.containers import Vertical
@@ -9,17 +14,25 @@ from textual.widgets import Button, Footer, Header, Label
 
 from hoops_sim.models.league import League
 from hoops_sim.season.schedule import SeasonSchedule
-from hoops_sim.tui.widgets.schedule_calendar import ScheduleCalendar
+from hoops_sim.tui.widgets.season_progress import SeasonProgressBar
+from hoops_sim.tui.widgets.week_calendar import WeekCalendarGrid
 
 
 class ScheduleScreen(Screen):
-    """Calendar view of the season schedule.
+    """Calendar view of the season schedule with week navigation.
 
-    Highlights played/upcoming games with scores.
+    Features:
+    - Week calendar grid instead of flat list
+    - Navigate weeks with [ and ]
+    - Played games show W/L + score, color-coded
+    - Today's game highlighted
+    - Season progress bar
     """
 
     BINDINGS = [
         ("escape", "go_back", "Back"),
+        ("left_square_bracket", "prev_week", "Prev Week"),
+        ("right_square_bracket", "next_week", "Next Week"),
     ]
 
     def __init__(
@@ -27,26 +40,114 @@ class ScheduleScreen(Screen):
         schedule: SeasonSchedule,
         league: League,
         current_day: int = 1,
+        user_team_id: int | None = None,
     ) -> None:
         super().__init__()
         self.schedule = schedule
         self.league = league
         self.current_day = current_day
+        self.user_team_id = user_team_id or (
+            league.teams[0].id if league.teams else 0
+        )
+        # Start the week view centered on the current day
+        self._week_start = max(1, current_day - (current_day - 1) % 7)
 
     def compose(self) -> ComposeResult:
         yield Header()
         with Vertical(id="schedule-screen"):
-            yield Label(f"Season Schedule -- Day {self.current_day}", classes="screen-header")
+            yield Label(
+                f"[bold]Season Schedule -- Day {self.current_day}[/]",
+                classes="screen-header",
+            )
             yield Button("< Back", id="btn-back", classes="back-button")
 
-            team_names = {t.id: t.full_name for t in self.league.teams}
-            yield ScheduleCalendar(
-                games=self.schedule.games,
-                team_names=team_names,
+            yield Label(
+                "  [bold][[/] Prev Week    [bold]][/] Next Week",
+            )
+
+            # Week calendar
+            day_games = self._build_week_games()
+            yield WeekCalendarGrid(
+                week_start=self._week_start,
                 current_day=self.current_day,
-                id="schedule-cal",
+                day_games=day_games,
+                id="week-grid",
+            )
+
+            yield Label("")
+
+            # Season progress
+            games_played = sum(
+                1
+                for g in self.schedule.games
+                if g.played
+                and (
+                    g.home_team_id == self.user_team_id
+                    or g.away_team_id == self.user_team_id
+                )
+            )
+            yield SeasonProgressBar(
+                games_played=games_played,
+                total_games=82,
+                id="season-progress",
             )
         yield Footer()
+
+    def _build_week_games(self):
+        """Build day_games dict for the current week."""
+        day_games = {}
+        team_names = {t.id: t.full_name for t in self.league.teams}
+
+        for day_offset in range(7):
+            day = self._week_start + day_offset
+            games = self.schedule.games_on_day(day)
+            for game in games:
+                if (
+                    game.home_team_id == self.user_team_id
+                    or game.away_team_id == self.user_team_id
+                ):
+                    is_home = game.home_team_id == self.user_team_id
+                    opp_id = (
+                        game.away_team_id if is_home else game.home_team_id
+                    )
+                    opp_name = team_names.get(opp_id, f"Team {opp_id}")
+                    ha = "vs" if is_home else "@"
+
+                    if game.played:
+                        day_games[day] = (
+                            ha,
+                            opp_name,
+                            game.home_score,
+                            game.away_score,
+                            is_home,
+                        )
+                    else:
+                        day_games[day] = (ha, opp_name, None, None, is_home)
+        return day_games
+
+    def action_prev_week(self) -> None:
+        """Navigate to previous week."""
+        self._week_start = max(1, self._week_start - 7)
+        self.app.switch_screen(
+            ScheduleScreen(
+                schedule=self.schedule,
+                league=self.league,
+                current_day=self.current_day,
+                user_team_id=self.user_team_id,
+            )
+        )
+
+    def action_next_week(self) -> None:
+        """Navigate to next week."""
+        self._week_start += 7
+        self.app.switch_screen(
+            ScheduleScreen(
+                schedule=self.schedule,
+                league=self.league,
+                current_day=self.current_day,
+                user_team_id=self.user_team_id,
+            )
+        )
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "btn-back":

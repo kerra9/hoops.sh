@@ -7,11 +7,12 @@ import pytest
 
 def test_attribute_bar_creation():
     """AttributeBar can be created with label and value."""
-    from hoops_sim.tui.widgets.attribute_bar import AttributeBar, _rating_color
+    from hoops_sim.tui.theme import rating_color
+    from hoops_sim.tui.widgets.attribute_bar import AttributeBar
 
     bar = AttributeBar(label="Speed", value=85)
     assert bar._label == "Speed"
-    assert bar._value == 85
+    assert bar.value == 85
 
 
 def test_attribute_bar_clamps_value():
@@ -19,18 +20,18 @@ def test_attribute_bar_clamps_value():
     from hoops_sim.tui.widgets.attribute_bar import AttributeBar
 
     bar = AttributeBar(label="Test", value=150)
-    assert bar._value == 99
+    assert bar.value == 99
 
     bar2 = AttributeBar(label="Test", value=-10)
-    assert bar2._value == 0
+    assert bar2.value == 0
 
 
 def test_rating_color():
     """Rating color function returns appropriate colors for ranges."""
-    from hoops_sim.tui.widgets.attribute_bar import _rating_color
+    from hoops_sim.tui.theme import rating_color
 
-    assert _rating_color(95) == "#2ecc71"  # green for 90+
-    assert _rating_color(45) == "#c0392b"  # dark red for <50
+    assert rating_color(95) == "#2ecc71"  # green for 90+
+    assert rating_color(45) == "#c0392b"  # dark red for <50
 
 
 def test_energy_gauge_creation():
@@ -38,8 +39,8 @@ def test_energy_gauge_creation():
     from hoops_sim.tui.widgets.energy_gauge import EnergyGauge
 
     gauge = EnergyGauge(label="Energy", energy_pct=0.8, fatigue_tier=1)
-    assert gauge._energy_pct == 0.8
-    assert gauge._fatigue_tier == 1
+    assert gauge.energy_pct == 0.8
+    assert gauge.fatigue_tier == 1
 
 
 def test_energy_gauge_clamps():
@@ -47,8 +48,8 @@ def test_energy_gauge_clamps():
     from hoops_sim.tui.widgets.energy_gauge import EnergyGauge
 
     gauge = EnergyGauge(energy_pct=1.5, fatigue_tier=10)
-    assert gauge._energy_pct == 1.0
-    assert gauge._fatigue_tier == 5
+    assert gauge.energy_pct == 1.0
+    assert gauge.fatigue_tier == 5
 
 
 def test_player_row_creation():
@@ -107,7 +108,7 @@ def test_momentum_bar_creation():
     from hoops_sim.tui.widgets.momentum_bar import MomentumBar
 
     bar = MomentumBar(value=2.5, home_name="Lakers", away_name="Celtics")
-    assert bar._value == 2.5
+    assert bar.value == 2.5
 
 
 def test_momentum_bar_clamps():
@@ -115,10 +116,10 @@ def test_momentum_bar_clamps():
     from hoops_sim.tui.widgets.momentum_bar import MomentumBar
 
     bar = MomentumBar(value=10.0)
-    assert bar._value == 5.0
+    assert bar.value == 5.0
 
     bar2 = MomentumBar(value=-10.0)
-    assert bar2._value == -5.0
+    assert bar2.value == -5.0
 
 
 def test_game_clock_display_creation():
@@ -126,8 +127,8 @@ def test_game_clock_display_creation():
     from hoops_sim.tui.widgets.game_clock import GameClockDisplay
 
     clock = GameClockDisplay(quarter=2, game_clock="5:30.0", shot_clock="14")
-    assert clock._quarter == 2
-    assert clock._game_clock == "5:30.0"
+    assert clock.quarter == 2
+    assert clock.game_clock == "5:30.0"
 
 
 def test_scoreboard_creation():
@@ -135,8 +136,8 @@ def test_scoreboard_creation():
     from hoops_sim.tui.widgets.scoreboard import Scoreboard
 
     board = Scoreboard(home_name="Lakers", away_name="Celtics", home_score=98, away_score=95)
-    assert board._home_score == 98
-    assert board._away_score == 95
+    assert board.home_score == 98
+    assert board.away_score == 95
 
 
 def test_mini_box_score_creation():
@@ -196,3 +197,127 @@ def test_shooting_chart_creation():
     profile = ShootingProfile()
     chart = ShootingChart(profile=profile)
     assert chart._profile is profile
+
+
+# ── New widget tests ──────────────────────────────────────────
+
+
+def test_broadcast_scoreboard_creation():
+    """BroadcastScoreboard can be created."""
+    from hoops_sim.tui.widgets.broadcast_scoreboard import BroadcastScoreboard
+
+    sb = BroadcastScoreboard(home_name="Lakers", away_name="Celtics")
+    assert sb.home_score == 0
+    assert sb.away_score == 0
+
+
+def test_court_map_creation():
+    """CourtMap can be created."""
+    from hoops_sim.tui.widgets.court_map import CourtMap
+
+    court = CourtMap()
+    assert court._offense == []
+    assert court._defense == []
+
+
+def test_context_strip_creation():
+    """ContextStrip can be created."""
+    from hoops_sim.tui.widgets.context_strip import ContextStrip
+
+    strip = ContextStrip(home_name="Lakers", away_name="Celtics")
+    assert strip.momentum == 0.0
+
+
+def test_court_shooting_chart_creation():
+    """CourtShootingChart can be created."""
+    from hoops_sim.tui.widgets.court_shooting_chart import CourtShootingChart
+
+    chart = CourtShootingChart()
+    assert chart._profile is not None
+
+
+def test_career_sparkline():
+    """CareerSparkline generates valid sparkline strings."""
+    from hoops_sim.tui.widgets.career_sparkline import sparkline
+
+    result = sparkline([1.0, 2.0, 3.0, 4.0, 5.0])
+    assert len(result) == 5
+    assert result[0] != result[-1]  # min and max should differ
+
+
+def test_career_sparkline_empty():
+    """Sparkline handles empty input."""
+    from hoops_sim.tui.widgets.career_sparkline import sparkline
+
+    assert sparkline([]) == ""
+
+
+def test_final_score_display():
+    """FinalScoreDisplay can be created."""
+    from hoops_sim.tui.widgets.final_score import FinalScoreDisplay
+
+    display = FinalScoreDisplay(
+        home_name="Lakers", away_name="Celtics",
+        home_score=102, away_score=98,
+    )
+    assert display._home_score == 102
+
+
+def test_game_leaders_panel():
+    """GameLeadersPanel can be created."""
+    from hoops_sim.tui.widgets.game_leaders import GameLeadersPanel
+
+    panel = GameLeadersPanel(
+        leaders=[("PTS", "LeBron", "28"), ("REB", "AD", "12")]
+    )
+    assert len(panel._leaders) == 2
+
+
+def test_quarter_scoring_table():
+    """QuarterScoringTable can be created."""
+    from hoops_sim.tui.widgets.quarter_scoring import QuarterScoringTable
+
+    table = QuarterScoringTable(
+        home_name="LAL", away_name="BOS",
+        home_quarters=[22, 30, 26, 24],
+        away_quarters=[24, 28, 22, 24],
+    )
+    assert sum(table._home_q) == 102
+
+
+def test_depth_chart_creation():
+    """DepthChart can be created."""
+    from hoops_sim.tui.widgets.depth_chart import DepthChart
+
+    depth = {"PG": ["Player1"], "SG": ["Player2"]}
+    chart = DepthChart(depth=depth)
+    assert len(chart._depth) == 2
+
+
+def test_playoff_picture_strip():
+    """PlayoffPictureStrip can be created."""
+    from hoops_sim.tui.widgets.playoff_picture import PlayoffPictureStrip
+
+    strip = PlayoffPictureStrip(
+        east_teams=["BOS", "MIL", "CLE"],
+        west_teams=["LAL", "DEN", "GSW"],
+    )
+    assert len(strip._east) == 3
+
+
+def test_theme_rating_color():
+    """Theme rating_color returns valid colors."""
+    from hoops_sim.tui.theme import rating_color
+
+    assert rating_color(95).startswith("#")
+    assert rating_color(50).startswith("#")
+    assert rating_color(10).startswith("#")
+
+
+def test_theme_energy_color():
+    """Theme energy_color returns valid colors."""
+    from hoops_sim.tui.theme import energy_color
+
+    assert energy_color(0.9).startswith("#")
+    assert energy_color(0.5).startswith("#")
+    assert energy_color(0.1).startswith("#")

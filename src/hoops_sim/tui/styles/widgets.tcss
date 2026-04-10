@@ -1,0 +1,216 @@
+/* Shared widget styles */
+
+/* Attribute Bar */
+.attribute-bar {
+    height: 1;
+    layout: horizontal;
+}
+
+.attribute-bar-label {
+    width: 16;
+    color: $text-muted;
+}
+
+.attribute-bar-fill {
+    width: 1fr;
+}
+
+.attribute-bar-value {
+    width: 4;
+    text-align: right;
+}
+
+/* Energy Gauge */
+.energy-gauge {
+    height: 1;
+    layout: horizontal;
+}
+
+.energy-label {
+    width: 10;
+    color: $text-muted;
+}
+
+.energy-fill {
+    width: 1fr;
+}
+
+.energy-value {
+    width: 6;
+    text-align: right;
+}
+
+/* Badge Grid */
+.badge-grid {
+    layout: grid;
+    grid-size: 3;
+    grid-gutter: 1;
+    padding: 1;
+}
+
+.badge-bronze {
+    color: #cd7f32;
+}
+
+.badge-silver {
+    color: #c0c0c0;
+}
+
+.badge-gold {
+    color: #ffd700;
+}
+
+.badge-hof {
+    color: #9b59b6;
+}
+
+/* Tendency Bars */
+.tendency-bars {
+    height: auto;
+    width: 100%;
+    padding: 0;
+}
+
+/* Career Sparkline */
+.career-sparkline {
+    height: 1;
+    width: 100%;
+}
+
+/* Scoring Run Sparkline */
+.scoring-run-sparkline {
+    height: 1;
+    width: 100%;
+}
+
+/* Seed Input */
+.seed-input {
+    layout: horizontal;
+    height: 3;
+    width: 100%;
+}
+
+/* Schedule Calendar */
+.schedule-calendar {
+    width: 100%;
+    height: auto;
+}
+
+.game-played {
+    color: $text-muted;
+}
+
+.game-upcoming {
+    color: $text;
+}
+
+.game-today {
+    color: $success;
+    text-style: bold;
+}
+
+/* Week Calendar Grid */
+.week-calendar {
+    width: 100%;
+    height: auto;
+    layout: grid;
+    grid-size: 7;
+    grid-gutter: 1;
+    padding: 1;
+}
+
+.week-calendar .day-cell {
+    height: 4;
+    width: 1fr;
+    border: tall $primary;
+    padding: 0 1;
+}
+
+.week-calendar .day-cell-today {
+    border: tall $success;
+}
+
+/* Season Progress Bar */
+.season-progress {
+    height: 2;
+    width: 100%;
+    padding: 0 1;
+}
+
+/* Final Score Display */
+.final-score-display {
+    height: auto;
+    width: 100%;
+    text-align: center;
+    padding: 1;
+}
+
+/* Game Leaders Panel */
+.game-leaders-panel {
+    width: 100%;
+    height: auto;
+    padding: 1;
+    layout: grid;
+    grid-size: 3;
+    grid-gutter: 1;
+}
+
+/* League Ticker */
+.league-ticker {
+    height: 1;
+    width: 100%;
+    overflow: hidden;
+}
+
+/* Standings Snapshot */
+.standings-snapshot {
+    width: 100%;
+    height: auto;
+    padding: 0 1;
+}
+
+/* Mini Schedule */
+.mini-schedule {
+    width: 100%;
+    height: auto;
+    padding: 0 1;
+}
+
+/* Leader Board */
+.leader-board {
+    width: 100%;
+    height: auto;
+    padding: 0 1;
+}
+
+/* Playoff Picture Strip */
+.playoff-picture {
+    height: 2;
+    width: 100%;
+    padding: 0 1;
+}
+
+/* Fatigue tier colors */
+.fatigue-fresh {
+    color: #2ecc71;
+}
+
+.fatigue-light {
+    color: #f1c40f;
+}
+
+.fatigue-moderate {
+    color: #e67e22;
+}
+
+.fatigue-heavy {
+    color: #e74c3c;
+}
+
+.fatigue-exhausted {
+    color: #c0392b;
+}
+
+.fatigue-gassed {
+    color: #8b0000;
+}

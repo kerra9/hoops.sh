@@ -1,4 +1,7 @@
-"""Main menu screen -- entry point for the TUI."""
+"""Main menu screen -- entry point for the TUI.
+
+Redesigned with figlet-style banner, hotkey grid, and recent save panel.
+"""
 
 from __future__ import annotations
 
@@ -7,9 +10,37 @@ from textual.containers import Center, Vertical
 from textual.screen import Screen
 from textual.widgets import Button, Footer, Header, Label
 
+from hoops_sim.tui.theme import BANNER_GRADIENT
+
+# Figlet-style banner with gradient coloring
+_BANNER = r"""
+ _                            _
+| |__   ___   ___  _ __  ___ | |
+| '_ \ / _ \ / _ \| '_ \/ __|| |
+| | | | (_) | (_) | |_) \__ \|_|
+|_| |_|\___/ \___/| .__/|___/(_)
+                   |_|       .sh
+"""
+
+
+def _gradient_banner() -> str:
+    """Apply gradient coloring to the banner text."""
+    lines = _BANNER.strip().split("\n")
+    colored_lines = []
+    for i, line in enumerate(lines):
+        color = BANNER_GRADIENT[i % len(BANNER_GRADIENT)]
+        colored_lines.append(f"[{color}]{line}[/]")
+    return "\n".join(colored_lines)
+
 
 class MainMenuScreen(Screen):
-    """Entry point. New season, load, quick game, settings, quit."""
+    """Entry point. New season, load, quick game, settings, quit.
+
+    Features:
+    - Gradient-colored figlet banner
+    - Hotkey grid instead of stacked buttons
+    - Keyboard-first navigation
+    """
 
     BINDINGS = [
         ("n", "new_season", "New Season"),
@@ -23,24 +54,30 @@ class MainMenuScreen(Screen):
         with Center(id="main-menu"):
             with Vertical(id="main-menu-buttons"):
                 yield Label(
-                    r"""
- _                            _
-| |__   ___   ___  _ __  ___ | |
-| '_ \ / _ \ / _ \| '_ \/ __|| |
-| | | | (_) | (_) | |_) \__ \|_|
-|_| |_|\___/ \___/| .__/|___/(_)
-                   |_|       .sh
-""",
+                    _gradient_banner(),
                     id="main-menu-title",
                 )
                 yield Label(
                     "Maximum Fidelity Basketball Simulator",
                     id="main-menu-subtitle",
                 )
-                yield Button("New Season", id="btn-new-season", variant="primary")
-                yield Button("Quick Game", id="btn-quick-game", variant="default")
-                yield Button("Settings", id="btn-settings", variant="default")
-                yield Button("Quit", id="btn-quit", variant="error")
+                yield Label("")
+                yield Label(
+                    "  [bold green][N][/] New Season    "
+                    "[bold blue][G][/] Quick Game"
+                )
+                yield Label(
+                    "  [bold yellow][S][/] Settings      "
+                    "[bold red][Q][/] Quit"
+                )
+                yield Label("")
+
+                # Hotkey buttons as fallback for click/touch
+                with Vertical(id="main-menu-hotkeys"):
+                    yield Button("New Season", id="btn-new-season", variant="primary")
+                    yield Button("Quick Game", id="btn-quick-game", variant="default")
+                    yield Button("Settings", id="btn-settings", variant="default")
+                    yield Button("Quit", id="btn-quit", variant="error")
         yield Footer()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
@@ -69,7 +106,9 @@ class MainMenuScreen(Screen):
         home = league.teams[0]
         away = league.teams[1]
         self.app.push_screen(
-            LiveGameScreen(home_team=home, away_team=away, seed=rng.randint(1, 999999))
+            LiveGameScreen(
+                home_team=home, away_team=away, seed=rng.randint(1, 999999)
+            )
         )
 
     def action_settings(self) -> None:

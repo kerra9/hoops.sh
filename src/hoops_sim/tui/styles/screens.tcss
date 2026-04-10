@@ -1,0 +1,217 @@
+/* Screen-specific layout styles */
+
+/* ── Main Menu ──────────────────────────────────────────── */
+#main-menu {
+    align: center middle;
+    width: 100%;
+    height: 100%;
+}
+
+#main-menu-title {
+    text-align: center;
+    width: 100%;
+    color: $success;
+    text-style: bold;
+    margin-bottom: 1;
+}
+
+#main-menu-subtitle {
+    text-align: center;
+    width: 100%;
+    color: $text-muted;
+    margin-bottom: 2;
+}
+
+#main-menu-buttons {
+    align: center middle;
+    width: auto;
+    height: auto;
+    layout: vertical;
+}
+
+#main-menu-buttons Button {
+    width: 40;
+    margin: 1 0;
+}
+
+#main-menu-hotkeys {
+    width: 52;
+    height: auto;
+    layout: grid;
+    grid-size: 2;
+    grid-gutter: 1;
+    margin-top: 1;
+}
+
+#main-menu-hotkeys Button {
+    width: 24;
+}
+
+.recent-save-panel {
+    width: 52;
+    height: auto;
+    border: tall $primary;
+    padding: 1;
+    margin-top: 1;
+}
+
+/* ── League Hub ─────────────────────────────────────────── */
+#league-hub {
+    layout: vertical;
+    height: 100%;
+}
+
+#league-hub-header {
+    height: 3;
+    dock: top;
+    background: $primary-background;
+    color: $text;
+    text-align: center;
+    padding: 1;
+    text-style: bold;
+}
+
+#league-hub-nav {
+    layout: horizontal;
+    height: auto;
+    align: center middle;
+    margin: 1 0;
+}
+
+#league-hub-nav Button {
+    margin: 0 1;
+}
+
+#league-hub-info {
+    layout: vertical;
+    height: auto;
+    margin: 1 2;
+    padding: 1;
+    border: tall $primary;
+}
+
+#league-hub-grid {
+    layout: grid;
+    grid-size: 2;
+    grid-gutter: 1;
+    height: 1fr;
+    padding: 0 1;
+}
+
+#league-hub-grid > * {
+    border: tall $primary;
+    padding: 1;
+}
+
+/* ── Season Setup ───────────────────────────────────────── */
+#season-setup {
+    align: center middle;
+    width: 100%;
+    height: 100%;
+}
+
+#season-setup-form {
+    width: 60;
+    height: auto;
+    border: tall $primary;
+    padding: 1 2;
+}
+
+/* ── Settings ───────────────────────────────────────────── */
+#settings-screen {
+    align: center middle;
+}
+
+#settings-form {
+    width: 60;
+    height: auto;
+    border: tall $primary;
+    padding: 1 2;
+}
+
+/* ── Standings ──────────────────────────────────────────── */
+#standings-screen {
+    layout: vertical;
+    height: 100%;
+}
+
+/* ── Schedule ───────────────────────────────────────────── */
+#schedule-screen {
+    layout: vertical;
+    height: 100%;
+}
+
+/* ── Roster Management ──────────────────────────────────── */
+#roster-mgmt {
+    layout: vertical;
+    height: 100%;
+}
+
+/* ── Live Game ──────────────────────────────────────────── */
+#live-game {
+    layout: vertical;
+    height: 100%;
+}
+
+#live-game-top {
+    layout: horizontal;
+    height: 3;
+    dock: top;
+}
+
+#live-game-middle {
+    layout: horizontal;
+    height: 1fr;
+}
+
+#live-game-court-panel {
+    width: 38;
+    border: tall $primary;
+    padding: 0;
+}
+
+#live-game-play-by-play {
+    width: 1fr;
+    border: tall $primary;
+    padding: 0 1;
+}
+
+#live-game-stats {
+    width: 1fr;
+}
+
+#live-game-bottom {
+    layout: vertical;
+    height: 5;
+    dock: bottom;
+    padding: 0 1;
+}
+
+#live-game-controls {
+    width: auto;
+    layout: horizontal;
+    align: right middle;
+}
+
+/* ── Box Score ──────────────────────────────────────────── */
+#box-score-screen {
+    layout: vertical;
+    height: 100%;
+}
+
+#box-score-tabs {
+    dock: top;
+    height: 3;
+}
+
+/* ── Post-Game / Sim Results ────────────────────────────── */
+#post-game-screen {
+    layout: vertical;
+    height: 100%;
+    align: center middle;
+}
+
+#sim-results-screen {
+    layout: vertical;
+    height: 100%;
+}
