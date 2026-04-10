@@ -11,8 +11,10 @@ from dataclasses import dataclass, field
 
 from hoops_sim.court.model import get_basket_position, is_three_point
 from hoops_sim.court.zones import Zone, get_zone, get_zone_info
+from hoops_sim.engine.action_fsm import ActionStateMachine, OffBallOffenseState
 from hoops_sim.models.player import Player
 from hoops_sim.physical.energy import EnergyState
+from hoops_sim.physics.kinematics import PlayerKinematics
 from hoops_sim.physics.vec import Vec2
 from hoops_sim.utils.constants import (
     COURT_LENGTH,
@@ -54,6 +56,21 @@ class PlayerCourtState:
     is_on_court: bool = False
     minutes_played: float = 0.0
     fouls: int = 0
+
+    # Micro-action FSM (Phase 1: tick-driven simulation)
+    fsm: ActionStateMachine = field(default_factory=ActionStateMachine)
+
+    # Physics-based movement (replaces static position assignment)
+    kinematics: PlayerKinematics | None = None
+
+    def init_kinematics(self) -> None:
+        """Initialize kinematics from player attributes."""
+        self.kinematics = PlayerKinematics.from_attributes(
+            position=self.position,
+            speed_attr=self.player.attributes.athleticism.speed,
+            acceleration_attr=self.player.attributes.athleticism.acceleration,
+            lateral_quickness_attr=self.player.attributes.defense.lateral_quickness,
+        )
 
     @property
     def player_id(self) -> int:

@@ -3,23 +3,35 @@
 Owns the full game loop and wires together all subsystems:
 - GameState / GameClock (clock management)
 - CourtState (player positions, ball state)
-- Player AI (ball handler decisions)
-- Shot Probability (18-factor calculator)
+- ActionStateMachine (per-player micro-action FSMs)
+- PlayerKinematics (physics-based movement)
+- Dribble moves, pass types, screen mechanics
+- Defensive AI, help rotations, closeouts
+- Shot probability with context from preceding actions
 - Energy/Fatigue system
-- Coach AI (substitutions, timeouts)
+- Coach AI (substitutions, timeouts, play calling)
 - Narration engine
 - Momentum/Confidence tracking
+- Contact detection and foul adjudication
+- Situational basketball and clock management
 
-The simulation runs at the **possession level**: each possession resolves
-through 1-4 action cycles (pass, dribble, shoot) that consume realistic
-game-clock time. This keeps the simulator fast while still using the full
-depth of the subsystems.
+The simulation runs at **tick-level resolution** (0.1s per tick). Each
+possession unfolds as a sequence of micro-actions: dribble moves, screens,
+passes, cuts, drives, and shots -- all consuming real time and space.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from hoops_sim.actions.dribble import (
+    DRIBBLE_MOVES,
+    DribbleMoveType,
+    resolve_dribble_move,
+)
+from hoops_sim.actions.finishing import select_finish_type
+from hoops_sim.actions.passing import PassType, resolve_pass
+from hoops_sim.actions.screen import ScreenType, evaluate_screen
 from hoops_sim.ai.coach_brain import (
     evaluate_substitution_need,
     should_call_timeout,
@@ -29,6 +41,17 @@ from hoops_sim.court.driving_lanes import analyze_driving_lane
 from hoops_sim.court.model import get_basket_position
 from hoops_sim.court.passing_lanes import analyze_passing_lane
 from hoops_sim.court.zones import Zone, get_zone, get_zone_info
+from hoops_sim.defense.pnr_coverage import PnRCoverageType, evaluate_pnr_coverage
+from hoops_sim.engine.action_fsm import (
+    ACTION_DURATIONS,
+    ActionStateMachine,
+    BallHandlerState,
+    DefenderState,
+    MovementIntent,
+    OffBallOffenseState,
+    PossessionEvent,
+    PossessionEventType,
+)
 from hoops_sim.engine.court_state import (
     BallStatus,
     CourtState,
@@ -37,10 +60,20 @@ from hoops_sim.engine.court_state import (
 )
 from hoops_sim.engine.game import GamePhase, GameState
 from hoops_sim.engine.possession import PossessionState
+from hoops_sim.engine.situational import evaluate_situation
 from hoops_sim.models.stats import TeamGameStats
 from hoops_sim.models.team import Team
 from hoops_sim.narration.engine import NarrationEngine, NarrationEvent
+from hoops_sim.physics.kinematics import MovementType
 from hoops_sim.physics.vec import Vec2
+from hoops_sim.plays.playbook import (
+    FAST_BREAK,
+    ISOLATION,
+    MOTION_OFFENSE,
+    PICK_AND_ROLL,
+    POST_UP,
+    PlayDefinition,
+)
 from hoops_sim.psychology.confidence import ConfidenceTracker
 from hoops_sim.psychology.momentum import MomentumTracker
 from hoops_sim.shot.probability import ShotContext, calculate_shot_probability
@@ -54,6 +87,9 @@ from hoops_sim.utils.constants import (
 )
 from hoops_sim.utils.math import attribute_to_range, clamp
 from hoops_sim.utils.rng import RNGManager
+
+# Maximum ticks per possession to prevent infinite loops
+MAX_TICKS_PER_POSSESSION = 300  # 30 seconds
 
 
 @dataclass
@@ -80,9 +116,9 @@ class GameResult:
 class GameSimulator:
     """The real basketball simulation engine.
 
-    Simulates at the possession level: each possession goes through
-    1-4 action cycles where the ball handler AI decides what to do,
-    and the action is resolved using the full subsystem stack.
+    Simulates at the tick level: each possession unfolds as a sequence
+    of micro-actions (dribble moves, screens, passes, drives, shots)
+    that consume real time and real space on the court.
     """
 
     def __init__(
@@ -110,6 +146,10 @@ class GameSimulator:
         away_sorted = sorted(away_team.roster, key=lambda p: p.overall, reverse=True)
         self.court = create_initial_positions(home_sorted, away_sorted)
 
+        # Initialize kinematics and FSMs for all on-court players
+        for pcs in self.court.all_on_court():
+            pcs.init_kinematics()
+
         # Subsystems
         self.narration = NarrationEngine(self._rng) if narrate else None
         self.momentum = MomentumTracker()
@@ -131,6 +171,10 @@ class GameSimulator:
         self._total_possessions = 0
         self._quarter = 0
         self._last_passer_id: int | None = None
+
+        # Micro-action tracking
+        self._possession_events: list[PossessionEvent] = []
+        self._current_play: PlayDefinition | None = None
 
     # -- Public API -----------------------------------------------------------
 
@@ -178,7 +222,11 @@ class GameSimulator:
         self._def_team_id = self.away_team.id if home_starts else self.home_team.id
 
     def _simulate_possession(self) -> None:
-        """Simulate a single possession from inbound to resolution."""
+        """Simulate a single possession using the micro-action tick loop.
+
+        This is the core of the overhaul: instead of random time + action cycles,
+        we process 10 player FSMs every tick (0.1s) until the possession ends.
+        """
         gs = self.game_state
 
         if self._game_over:
@@ -191,75 +239,292 @@ class GameSimulator:
         # Set up the possession
         self._setup_possession(home_on_offense)
 
-        # Consume 5-14 seconds of clock time for the play to develop
-        # NBA average possession length is ~14 seconds
-        setup_time = self._rng.uniform(5.0, 14.0)
-        self._advance_clock(setup_time)
+        # Evaluate situation for tactical modifiers
+        situation_type, sit_mods = evaluate_situation(
+            game_clock=gs.clock.game_clock,
+            shot_clock=gs.clock.shot_clock,
+            quarter=gs.clock.quarter,
+            score_diff=gs.score.diff if is_home else -gs.score.diff,
+            is_home=is_home,
+        )
 
-        # Check quarter end after setup time
+        # Phase 1: Bring the ball up court (3-6 seconds)
+        bring_up_ticks = self._rng.randint(30, 60)
+        self._advance_clock(bring_up_ticks * TICK_DURATION)
+        self._drain_energy_for_ticks(bring_up_ticks)
         if self._check_quarter_end():
             return
 
-        # Drain energy for on-court players during setup
-        self._drain_energy_for_time(setup_time)
+        # Phase 2: Coach selects play
+        self._current_play = self._select_play(home_on_offense, situation_type)
+        self._assign_play_roles(home_on_offense)
 
-        # Get the ball handler and run 1-3 action cycles
-        max_actions = self._rng.randint(1, 3)
-        for action_num in range(max_actions):
+        # Phase 3: Micro-action tick loop
+        self._possession_events = []
+        possession_resolved = False
+        ticks_elapsed = 0
+
+        while not possession_resolved and ticks_elapsed < MAX_TICKS_PER_POSSESSION:
+            ticks_elapsed += 1
+
+            # Advance game clock
+            self._advance_clock(TICK_DURATION)
+            if self._check_quarter_end():
+                return
+
+            # Check shot clock
+            if gs.clock.shot_clock <= 0.0:
+                self._shot_clock_violation(home_on_offense)
+                self._end_possession_and_flip()
+                return
+
+            # Process all 10 player FSMs
             handler = self._get_ball_handler(home_on_offense)
             if handler is None:
                 break
 
-            # Run the player AI, with pass bias on first action
-            action = self._run_player_ai(handler, home_on_offense)
+            # Tick all FSMs and update positions
+            self._tick_all_players(home_on_offense)
 
-            # First action: force a pass 60% of the time to distribute the ball
-            if action_num == 0 and max_actions > 1 and action.action == "shoot":
-                pass_quals = self._eval_pass_qualities(handler, home_on_offense)
-                if pass_quals and self._rng.random() < 0.60:
-                    best_pass = max(pass_quals, key=lambda pq: pq[1])
-                    action = ActionOption("pass", 0.5, target_id=best_pass[0])
+            # Ball handler AI decision (when their action completes or is interruptible)
+            if handler.fsm.can_interrupt:
+                possession_resolved = self._process_ball_handler_tick(
+                    handler, home_on_offense, ticks_elapsed, sit_mods,
+                )
 
-            if action.action == "shoot":
-                self._execute_shot(handler, home_on_offense, action_num > 0)
-                self._end_possession_and_flip()
-                return
+            # Drain energy for this tick
+            self._drain_energy_for_ticks(1)
 
-            elif action.action == "drive":
-                resolved = self._execute_drive(handler, home_on_offense)
-                if resolved:
-                    self._end_possession_and_flip()
-                    return
-                # Drive didn't resolve (kicked out) -- continue to next action
+        # If we exhausted ticks without resolving, force a shot
+        if not possession_resolved:
+            handler = self._get_ball_handler(home_on_offense)
+            if handler:
+                self._execute_shot(handler, home_on_offense, catch_and_shoot=False)
+            self._end_possession_and_flip()
 
-            elif action.action == "pass" and action.target_id is not None:
-                stolen = self._execute_pass(handler, action.target_id, home_on_offense)
-                if stolen:
-                    self._end_possession_and_flip()
-                    return
-                # Successful pass -- consume 1-2 seconds, continue
-                pass_time = self._rng.uniform(1.0, 2.5)
-                self._advance_clock(pass_time)
-                if self._check_quarter_end():
-                    return
+    def _process_ball_handler_tick(
+        self,
+        handler: PlayerCourtState,
+        home_on_offense: bool,
+        ticks_elapsed: int,
+        sit_mods: object,
+    ) -> bool:
+        """Process a ball handler's decision for this tick.
 
-            elif action.action == "post_up":
-                self._execute_post_up(handler, home_on_offense)
-                self._end_possession_and_flip()
-                return
+        Returns True if the possession is resolved (shot taken, turnover, etc.).
+        """
+        gs = self.game_state
+        player = handler.player
+        basket = self.court.basket_position(home_on_offense)
 
-            else:
-                # Hold: consume time
-                hold_time = self._rng.uniform(1.5, 3.0)
-                self._advance_clock(hold_time)
-                if self._check_quarter_end():
-                    return
+        # Get current context
+        shot_quality = self._eval_shot_quality(handler, home_on_offense)
+        drive_quality = self._eval_drive_quality(handler, home_on_offense)
+        pass_qualities = self._eval_pass_qualities(handler, home_on_offense)
+        post_quality = 0.0
+        if (handler.position.distance_to(basket) < 15.0
+                and player.attributes.finishing.post_moves > 60):
+            post_quality = player.attributes.finishing.post_moves / 100.0 * 0.7
 
-        # If we exhausted all action cycles without resolving, take a shot
-        handler = self._get_ball_handler(home_on_offense)
-        if handler:
+        shot_clock_pct = gs.clock.shot_clock / 24.0
+
+        # Run player AI
+        action = evaluate_ball_handler_options(
+            shot_quality=shot_quality,
+            drive_quality=drive_quality,
+            pass_qualities=pass_qualities,
+            post_quality=post_quality,
+            shot_volume_tendency=player.tendencies.shot_volume,
+            drive_tendency=player.tendencies.drive_tendency,
+            pass_first_tendency=player.tendencies.pass_first,
+            post_up_tendency=player.tendencies.post_up_tendency,
+            shot_clock_pct=shot_clock_pct,
+            confidence=self.confidence.shooting_modifier(player.id),
+            basketball_iq=player.attributes.mental.basketball_iq,
+            rng=self._ai_rng,
+        )
+
+        # Early possession: bias toward passing to move the ball
+        if ticks_elapsed < 30 and action.action == "shoot" and shot_clock_pct > 0.5:
+            if pass_qualities and self._rng.random() < 0.50:
+                best_pass = max(pass_qualities, key=lambda pq: pq[1])
+                action = ActionOption("pass", 0.5, target_id=best_pass[0])
+
+        # Execute the chosen action
+        if action.action == "shoot":
+            # Execute a dribble move before shooting if defender is close
+            def_dist = self.court.defender_distance(player.id, home_on_offense)
+            if def_dist < 5.0 and self._rng.random() < 0.4:
+                self._execute_dribble_move(handler, home_on_offense)
             self._execute_shot(handler, home_on_offense, catch_and_shoot=False)
-        self._end_possession_and_flip()
+            self._end_possession_and_flip()
+            return True
+
+        elif action.action == "drive":
+            # Execute a dribble move to create space before driving
+            if self._rng.random() < 0.6:
+                self._execute_dribble_move(handler, home_on_offense)
+            resolved = self._execute_drive(handler, home_on_offense)
+            if resolved:
+                self._end_possession_and_flip()
+                return True
+            # Drive kicked out: transition to pass
+            handler.fsm.transition_to(
+                BallHandlerState.DRIBBLING_IN_PLACE,
+                ticks=self._rng.randint(5, 15),
+                target=handler.position,
+                intent=MovementIntent.STAND,
+            )
+            return False
+
+        elif action.action == "pass" and action.target_id is not None:
+            stolen = self._execute_pass(handler, action.target_id, home_on_offense)
+            if stolen:
+                self._end_possession_and_flip()
+                return True
+            # Successful pass: receiver decides next
+            handler.fsm.transition_to(
+                OffBallOffenseState.RELOCATING,
+                ticks=self._rng.randint(10, 20),
+                target=self._find_spot_up_position(handler, home_on_offense),
+                intent=MovementIntent.JOG,
+            )
+            return False
+
+        elif action.action == "post_up":
+            self._execute_post_up(handler, home_on_offense)
+            self._end_possession_and_flip()
+            return True
+
+        else:
+            # Hold: dribble in place, maybe execute a move
+            if self._rng.random() < 0.3:
+                self._execute_dribble_move(handler, home_on_offense)
+            handler.fsm.transition_to(
+                BallHandlerState.DRIBBLING_IN_PLACE,
+                ticks=self._rng.randint(5, 20),
+                target=handler.position,
+                intent=MovementIntent.STAND,
+            )
+            return False
+
+    def _tick_all_players(self, home_on_offense: bool) -> None:
+        """Advance all 10 player FSMs by one tick and update positions."""
+        for pcs in self.court.all_on_court():
+            # Tick the FSM
+            pcs.fsm.tick()
+
+            # Update position via kinematics if available
+            if pcs.kinematics is not None:
+                movement_type = self._intent_to_movement_type(pcs.fsm.movement_intent)
+                pcs.kinematics.update(
+                    dt=TICK_DURATION,
+                    target_position=pcs.fsm.movement_target,
+                    movement_type=movement_type,
+                )
+                # Sync position from kinematics
+                pcs.position = Vec2(
+                    clamp(pcs.kinematics.position.x, 0, COURT_LENGTH),
+                    clamp(pcs.kinematics.position.y, 0, COURT_WIDTH),
+                )
+
+        # Update off-ball players' FSMs when their action completes
+        offense = self.court.offensive_players(home_on_offense)
+        defense = self.court.defensive_players(home_on_offense)
+        basket = self.court.basket_position(home_on_offense)
+        ball_handler = self.court.ball_handler()
+
+        for pcs in offense:
+            if ball_handler and pcs.player_id == ball_handler.player_id:
+                continue  # Ball handler is handled separately
+            if pcs.fsm.is_complete:
+                self._decide_off_ball_action(pcs, home_on_offense, basket)
+
+        for pcs in defense:
+            if pcs.fsm.is_complete:
+                self._decide_defensive_action(pcs, home_on_offense, basket)
+
+    def _decide_off_ball_action(
+        self, pcs: PlayerCourtState, home_on_offense: bool, basket: Vec2,
+    ) -> None:
+        """Decide what an off-ball offensive player does next."""
+        player = pcs.player
+
+        # Spot up at the three-point line if a shooter
+        if player.attributes.shooting.three_point > 65:
+            target = self._find_spot_up_position(pcs, home_on_offense)
+            pcs.fsm.transition_to(
+                OffBallOffenseState.SPOTTING_UP,
+                ticks=self._rng.randint(15, 40),
+                target=target,
+                intent=MovementIntent.JOG,
+            )
+        # Cut if a good finisher/cutter
+        elif player.tendencies.crash_boards > 0.5 and self._rng.random() < 0.2:
+            pcs.fsm.transition_to(
+                OffBallOffenseState.CUTTING,
+                ticks=self._rng.randint(8, 15),
+                target=basket,
+                intent=MovementIntent.SPRINT,
+            )
+        else:
+            # Relocate to maintain spacing
+            target = self._find_spot_up_position(pcs, home_on_offense)
+            pcs.fsm.transition_to(
+                OffBallOffenseState.RELOCATING,
+                ticks=self._rng.randint(10, 25),
+                target=target,
+                intent=MovementIntent.JOG,
+            )
+
+    def _decide_defensive_action(
+        self, pcs: PlayerCourtState, home_on_offense: bool, basket: Vec2,
+    ) -> None:
+        """Decide what a defensive player does next."""
+        # Find their assignment
+        assignment = None
+        if pcs.defensive_assignment_id is not None:
+            assignment = self.court.get_player_state(pcs.defensive_assignment_id)
+
+        ball_handler = self.court.ball_handler()
+
+        if assignment is None:
+            # Guard the ball handler area
+            if ball_handler:
+                target = ball_handler.position + (basket - ball_handler.position).normalized() * 5
+            else:
+                target = basket
+            pcs.fsm.transition_to(
+                DefenderState.GUARDING_ON_BALL,
+                ticks=self._rng.randint(5, 15),
+                target=target,
+                intent=MovementIntent.JOG,
+            )
+            return
+
+        # If assignment has the ball, guard on-ball
+        if ball_handler and assignment.player_id == ball_handler.player_id:
+            to_basket = (basket - assignment.position).normalized()
+            guard_pos = assignment.position + to_basket * 3.0
+            pcs.fsm.transition_to(
+                DefenderState.GUARDING_ON_BALL,
+                ticks=self._rng.randint(3, 10),
+                target=guard_pos,
+                intent=MovementIntent.LATERAL,
+            )
+        else:
+            # Off-ball: deny position between assignment and basket
+            to_basket = (basket - assignment.position).normalized()
+            deny_pos = assignment.position + to_basket * 3.0
+            if ball_handler:
+                to_ball = (ball_handler.position - assignment.position).normalized()
+                deny_pos = assignment.position + to_basket * 2.5 + to_ball * 1.0
+            pcs.fsm.transition_to(
+                DefenderState.DENYING_PASS,
+                ticks=self._rng.randint(5, 20),
+                target=deny_pos,
+                intent=MovementIntent.JOG,
+            )
 
     def _setup_possession(self, home_on_offense: bool) -> None:
         """Reset positions and state for a new possession."""
@@ -273,6 +538,9 @@ class GameSimulator:
         # Place players in half-court positions
         self._reset_positions(home_on_offense)
 
+        # Initialize FSMs for all players
+        self._init_player_fsms(home_on_offense)
+
         # Give ball to a random offensive player, weighted by playmaking
         offense = self.court.offensive_players(home_on_offense)
         if offense:
@@ -284,11 +552,78 @@ class GameSimulator:
             handler = self._rng.choices(offense, weights=weights, k=1)[0]
             self.court.ball.holder_id = handler.player_id
             self.court.ball.status = BallStatus.HELD
+            handler.fsm.transition_to(
+                BallHandlerState.BRINGING_BALL_UP,
+                ticks=self._rng.randint(20, 40),
+                target=self.court.basket_position(home_on_offense),
+                intent=MovementIntent.JOG,
+            )
 
         # Coach AI between possessions
         self._check_coach_decisions(home_on_offense)
         self.confidence.decay_all()
         self.momentum.decay()
+
+    def _init_player_fsms(self, home_on_offense: bool) -> None:
+        """Set initial FSM states for all on-court players."""
+        basket = self.court.basket_position(home_on_offense)
+        offense = self.court.offensive_players(home_on_offense)
+        defense = self.court.defensive_players(home_on_offense)
+
+        for pcs in offense:
+            if self.court.ball.holder_id == pcs.player_id:
+                continue  # Ball handler FSM set separately
+            pcs.fsm.transition_to(
+                OffBallOffenseState.SPOTTING_UP,
+                ticks=self._rng.randint(15, 30),
+                target=pcs.position,
+                intent=MovementIntent.JOG,
+            )
+            pcs.fsm.is_offense = True
+
+        for pcs in defense:
+            assignment = None
+            if pcs.defensive_assignment_id is not None:
+                assignment = self.court.get_player_state(pcs.defensive_assignment_id)
+            target = pcs.position
+            if assignment:
+                to_basket = (basket - assignment.position).normalized()
+                target = assignment.position + to_basket * 3.0
+            pcs.fsm.transition_to(
+                DefenderState.DENYING_PASS,
+                ticks=self._rng.randint(10, 30),
+                target=target,
+                intent=MovementIntent.JOG,
+            )
+            pcs.fsm.is_offense = False
+
+    def _select_play(self, home_on_offense: bool, situation_type: object) -> PlayDefinition:
+        """Coach selects a play based on situation and personnel."""
+        plays = [PICK_AND_ROLL, ISOLATION, MOTION_OFFENSE, POST_UP, FAST_BREAK]
+        weights = [0.30, 0.15, 0.25, 0.15, 0.15]
+
+        # Adjust weights based on personnel
+        offense = self.court.offensive_players(home_on_offense)
+        if offense:
+            best_player = max(offense, key=lambda p: p.player.overall)
+            # Star player -> more isolation
+            if best_player.player.overall > 85:
+                weights[1] *= 1.5
+            # Good passer -> more PnR and motion
+            if best_player.player.attributes.playmaking.pass_vision > 75:
+                weights[0] *= 1.3
+                weights[2] *= 1.2
+            # Post player -> more post ups
+            if best_player.player.attributes.finishing.post_moves > 70:
+                weights[3] *= 1.5
+
+        return self._rng.choices(plays, weights=weights, k=1)[0]
+
+    def _assign_play_roles(self, home_on_offense: bool) -> None:
+        """Assign play roles to players (simplified for now)."""
+        # The play executor handles detailed FSM assignments;
+        # here we just set initial movement targets based on the play
+        pass
 
     def _end_possession_and_flip(self) -> None:
         """Flip possession to the other team."""
@@ -374,6 +709,10 @@ class GameSimulator:
                     clamp(base.x + self._rng.gauss(0, 2.0), 0, COURT_LENGTH),
                     clamp(base.y + self._rng.gauss(0, 2.0), 0, COURT_WIDTH),
                 )
+                # Sync kinematics position
+                if pcs.kinematics is not None:
+                    pcs.kinematics.position = pcs.position.copy()
+                    pcs.kinematics.velocity = Vec2.zero()
 
         for i, dcs in enumerate(defense):
             if i < len(offense):
@@ -385,6 +724,25 @@ class GameSimulator:
                     clamp(off_pos.y + to_basket.y * 3.0 + self._rng.gauss(0, 1.0),
                           0, COURT_WIDTH),
                 )
+                if dcs.kinematics is not None:
+                    dcs.kinematics.position = dcs.position.copy()
+                    dcs.kinematics.velocity = Vec2.zero()
+
+    def _find_spot_up_position(
+        self, pcs: PlayerCourtState, home_on_offense: bool,
+    ) -> Vec2:
+        """Find a good spot-up position for spacing."""
+        basket = self.court.basket_position(home_on_offense)
+        direction = pcs.position - basket
+        if direction.magnitude() < 0.1:
+            direction = Vec2(1.0, 0.0)
+        direction = direction.normalized()
+
+        if pcs.player.attributes.shooting.three_point > 65:
+            # Spot up on the arc
+            return basket + direction * 24.0
+        else:
+            return basket + direction * 14.0
 
     # -- Player AI ------------------------------------------------------------
 
@@ -398,40 +756,6 @@ class GameSimulator:
             return offense[0]
         return None
 
-    def _run_player_ai(
-        self, handler: PlayerCourtState, home_on_offense: bool,
-    ) -> ActionOption:
-        """Run the player brain AI for the current ball handler."""
-        gs = self.game_state
-        player = handler.player
-        basket = self.court.basket_position(home_on_offense)
-
-        shot_quality = self._eval_shot_quality(handler, home_on_offense)
-        drive_quality = self._eval_drive_quality(handler, home_on_offense)
-        pass_qualities = self._eval_pass_qualities(handler, home_on_offense)
-
-        post_quality = 0.0
-        if (handler.position.distance_to(basket) < 15.0
-                and player.attributes.finishing.post_moves > 60):
-            post_quality = player.attributes.finishing.post_moves / 100.0 * 0.7
-
-        shot_clock_pct = gs.clock.shot_clock / 24.0
-
-        return evaluate_ball_handler_options(
-            shot_quality=shot_quality,
-            drive_quality=drive_quality,
-            pass_qualities=pass_qualities,
-            post_quality=post_quality,
-            shot_volume_tendency=player.tendencies.shot_volume,
-            drive_tendency=player.tendencies.drive_tendency,
-            pass_first_tendency=player.tendencies.pass_first,
-            post_up_tendency=player.tendencies.post_up_tendency,
-            shot_clock_pct=shot_clock_pct,
-            confidence=self.confidence.shooting_modifier(player.id),
-            basketball_iq=player.attributes.mental.basketball_iq,
-            rng=self._ai_rng,
-        )
-
     def _eval_shot_quality(
         self, handler: PlayerCourtState, home_on_offense: bool,
     ) -> float:
@@ -443,11 +767,11 @@ class GameSimulator:
         base_rating = player.get_zone_rating(zone.name)
         def_dist = self.court.defender_distance(handler.player_id, home_on_offense)
 
-        # Openness: 0 if defender <2ft, 1 if >8ft. Typical defender distance is 3-5ft
-        openness = clamp((def_dist - 2.0) / 6.0, 0.0, 1.0)
+        # Account for separation from dribble moves
+        effective_def_dist = def_dist + handler.fsm.defender_separation * 0.3
 
+        openness = clamp((effective_def_dist - 2.0) / 6.0, 0.0, 1.0)
         rating_factor = base_rating / 99.0
-        # Distance penalty: shots from far away are less desirable
         distance_penalty = clamp((dist - 4.0) / 25.0, 0.0, 0.5)
 
         quality = rating_factor * 0.35 + openness * 0.40 + (0.5 - distance_penalty) * 0.25
@@ -475,7 +799,11 @@ class GameSimulator:
             + player.attributes.finishing.layup * 0.2
             + player.attributes.finishing.driving_dunk * 0.2
         ) / 99.0
-        return clamp(result.quality * 0.6 + drive_skill * 0.4, 0.0, 1.0)
+
+        # Dribble move separation bonus
+        sep_bonus = handler.fsm.defender_separation * 0.02
+
+        return clamp(result.quality * 0.6 + drive_skill * 0.4 + sep_bonus, 0.0, 1.0)
 
     def _eval_pass_qualities(
         self, handler: PlayerCourtState, home_on_offense: bool,
@@ -505,7 +833,125 @@ class GameSimulator:
             qualities.append((tm.player_id, clamp(quality, 0.0, 1.0)))
         return qualities
 
-    # -- Action execution -----------------------------------------------------
+    # -- Micro-action execution -----------------------------------------------
+
+    def _execute_dribble_move(
+        self, handler: PlayerCourtState, home_on_offense: bool,
+    ) -> None:
+        """Execute a dribble move using the full dribble system."""
+        player = handler.player
+        def_dist = self.court.defender_distance(player.id, home_on_offense)
+        closest_def = self.court.closest_defender_to(handler.position, home_on_offense)
+
+        # Select move type based on situation
+        move_type = self._select_dribble_move(handler, def_dist)
+
+        # Get defender attributes
+        defender_lateral = 50
+        defender_steal = 50
+        if closest_def:
+            defender_lateral = closest_def.player.attributes.defense.lateral_quickness
+            defender_steal = closest_def.player.attributes.defense.steal
+
+        # Resolve the dribble move
+        result = resolve_dribble_move(
+            ball_handle=player.attributes.playmaking.ball_handle,
+            energy_pct=handler.energy.pct,
+            defender_lateral=defender_lateral,
+            defender_steal=defender_steal,
+            move_type=move_type,
+            has_ankle_breaker_badge=player.badges.has_badge("ankle_breaker"),
+            badge_tier=player.badges.tier_value("ankle_breaker"),
+            rng=self._phys_rng,
+        )
+
+        # Update FSM state
+        spec = DRIBBLE_MOVES[move_type]
+        ticks = max(3, int(spec.time_cost / TICK_DURATION))
+
+        handler.fsm.transition_to(
+            BallHandlerState.EXECUTING_DRIBBLE_MOVE,
+            ticks=ticks,
+            target=handler.position,
+            intent=MovementIntent.STAND,
+            context={"move_type": move_type.value, "result": result},
+        )
+
+        # Apply results
+        handler.energy.drain(result.energy_cost)
+
+        if result.success:
+            handler.fsm.defender_separation += result.separation
+            handler.fsm.increment_combo(True)
+
+            if result.ankle_breaker:
+                self._possession_events.append(PossessionEvent(
+                    event_type=PossessionEventType.ANKLE_BREAKER,
+                    player_id=player.id,
+                    description=f"{player.full_name} with the ankle breaker!",
+                ))
+                if self.narration:
+                    ev = NarrationEvent(
+                        text=f"{player.full_name} with the {move_type.value}... "
+                             f"ANKLE BREAKER! Defender is stumbling!",
+                    )
+                    self._emit("ankle_breaker", ev, {"player_id": player.id})
+        else:
+            handler.fsm.reset_combo()
+            if result.turnover:
+                self._turnover(handler, home_on_offense)
+                return
+
+        # Consume time
+        self._advance_clock(spec.time_cost)
+
+    def _select_dribble_move(
+        self, handler: PlayerCourtState, def_dist: float,
+    ) -> DribbleMoveType:
+        """Select the best dribble move for the situation."""
+        player = handler.player
+
+        # Available moves based on skill
+        ball_handle = player.attributes.playmaking.ball_handle
+        candidates: list[tuple[DribbleMoveType, float]] = []
+
+        # Always available
+        candidates.append((DribbleMoveType.CROSSOVER, 1.0))
+        candidates.append((DribbleMoveType.HESITATION, 0.8))
+        candidates.append((DribbleMoveType.IN_AND_OUT, 0.7))
+        candidates.append((DribbleMoveType.BETWEEN_THE_LEGS, 0.6))
+
+        # Skill-gated
+        if ball_handle > 70:
+            candidates.append((DribbleMoveType.BEHIND_THE_BACK, 0.7))
+            candidates.append((DribbleMoveType.SPIN_MOVE, 0.6))
+        if ball_handle > 80:
+            candidates.append((DribbleMoveType.STEP_BACK, 0.8))
+            candidates.append((DribbleMoveType.SNATCH_BACK, 0.7))
+            candidates.append((DribbleMoveType.HARDEN_STEP_BACK, 0.6))
+        if ball_handle > 90:
+            candidates.append((DribbleMoveType.SHAMGOD, 0.3))
+
+        # Situation modifiers
+        if def_dist < 3.0:
+            # Aggressive moves when defender is tight
+            for i, (mt, w) in enumerate(candidates):
+                if mt in (DribbleMoveType.CROSSOVER, DribbleMoveType.SPIN_MOVE):
+                    candidates[i] = (mt, w * 1.5)
+        elif def_dist > 5.0:
+            # Setup moves when defender is sagging
+            for i, (mt, w) in enumerate(candidates):
+                if mt in (DribbleMoveType.HESITATION, DribbleMoveType.IN_AND_OUT):
+                    candidates[i] = (mt, w * 1.3)
+
+        # Combo bonus: chain moves
+        if handler.fsm.combo_count > 0 and handler.fsm.combo_count < 3:
+            for i, (mt, w) in enumerate(candidates):
+                candidates[i] = (mt, w * 1.2)
+
+        weights = [w for _, w in candidates]
+        moves = [m for m, _ in candidates]
+        return self._ai_rng.choices(moves, weights=weights, k=1)[0]
 
     def _execute_shot(
         self,
@@ -526,7 +972,10 @@ class GameSimulator:
 
         base_rating = player.get_zone_rating(zone.name)
         def_dist = self.court.defender_distance(player.id, home_on_offense)
-        contest_quality = clamp(1.0 - def_dist / 6.0, 0.0, 1.0)
+
+        # Factor in dribble move separation
+        effective_def_dist = def_dist + handler.fsm.defender_separation * 0.3
+        contest_quality = clamp(1.0 - effective_def_dist / 6.0, 0.0, 1.0)
 
         rim_protector = any(
             d.position.distance_to(basket) < 8.0
@@ -538,12 +987,12 @@ class GameSimulator:
         ctx = ShotContext(
             base_rating=base_rating,
             energy_pct=handler.energy.pct,
-            is_open=def_dist > 4.0,
+            is_open=effective_def_dist > 4.0,
             is_catch_and_shoot=catch_and_shoot,
             is_off_dribble=not catch_and_shoot,
             hot_cold_modifier=self.confidence.get(player.id),
             shot_distance=dist,
-            contest_distance=def_dist,
+            contest_distance=effective_def_dist,
             contest_quality=contest_quality,
             rim_protector_present=rim_protector,
             deadeye_tier=player.badges.tier_value("deadeye"),
@@ -565,6 +1014,14 @@ class GameSimulator:
         else:
             make_prob *= self.momentum.away_modifier()
         make_prob = clamp(make_prob, 0.02, 0.98)
+
+        # Update FSM to shooting state
+        handler.fsm.transition_to(
+            BallHandlerState.PULLING_UP,
+            ticks=self._rng.randint(3, 5),
+            target=handler.position,
+            intent=MovementIntent.STAND,
+        )
 
         made = self._phys_rng.random() < make_prob
         points = 3 if is_three else 2
@@ -609,6 +1066,10 @@ class GameSimulator:
 
             if is_and_one:
                 self._free_throws(handler, 1, is_home)
+
+            # Reset dribble separation
+            handler.fsm.defender_separation = 3.0
+            handler.fsm.reset_combo()
         else:
             stats.record_missed_shot(is_three=is_three)
             self.confidence.on_missed_shot(player.id)
@@ -638,14 +1099,25 @@ class GameSimulator:
             # Rebound
             self._resolve_rebound(home_on_offense)
 
+            handler.fsm.defender_separation = 3.0
+            handler.fsm.reset_combo()
+
     def _execute_drive(
         self, handler: PlayerCourtState, home_on_offense: bool,
     ) -> bool:
-        """Execute a drive. Returns True if the possession resolved."""
+        """Execute a drive with micro-action integration. Returns True if resolved."""
         gs = self.game_state
         player = handler.player
         is_home = home_on_offense
         basket = self.court.basket_position(home_on_offense)
+
+        # Transition to driving state
+        handler.fsm.transition_to(
+            BallHandlerState.DRIVING,
+            ticks=self._rng.randint(8, 15),
+            target=basket,
+            intent=MovementIntent.SPRINT,
+        )
 
         # Move handler toward basket
         to_basket = (basket - handler.position).normalized()
@@ -654,6 +1126,8 @@ class GameSimulator:
             clamp(handler.position.x + to_basket.x * drive_dist, 0, COURT_LENGTH),
             clamp(handler.position.y + to_basket.y * drive_dist, 0, COURT_WIDTH),
         )
+        if handler.kinematics:
+            handler.kinematics.position = handler.position.copy()
         handler.energy.drain(ENERGY_DRAIN_SPRINT * 5)
 
         closest_def = self.court.closest_defender_to(handler.position, home_on_offense)
@@ -676,12 +1150,46 @@ class GameSimulator:
             self._foul_on_drive(handler, is_home)
             return True
 
-        # Kick-out decision (30% chance if drive quality is low)
+        # Kick-out decision (30% chance if not close to basket)
         new_dist = handler.position.distance_to(basket)
         if new_dist > 10.0 and self._phys_rng.random() < 0.3:
-            return False  # Didn't resolve, will pass/shoot next action
+            return False
 
-        # At-rim shot
+        # At-rim: select finishing move
+        rim_protector = any(
+            d.player.attributes.defense.block > 70
+            for d in self.court.defensive_players(home_on_offense)
+            if d.position.distance_to(basket) < 8.0
+        )
+
+        finish = select_finish_type(
+            layup=player.attributes.finishing.layup,
+            driving_dunk=player.attributes.finishing.driving_dunk,
+            standing_dunk=player.attributes.finishing.standing_dunk,
+            acrobatic_finish=player.attributes.finishing.acrobatic_finish,
+            post_hook=player.attributes.finishing.post_hook,
+            vertical_leap=player.attributes.athleticism.vertical_leap,
+            speed=player.attributes.athleticism.speed,
+            defender_distance=def_dist,
+            rim_protector_present=rim_protector,
+            has_contact_finisher=player.badges.has_badge("contact_finisher"),
+            has_slithery_finisher=player.badges.has_badge("slithery_finisher"),
+            has_posterizer=player.badges.has_badge("posterizer"),
+            has_acrobat=player.badges.has_badge("acrobat"),
+            is_putback=False,
+            rng=self._phys_rng,
+        )
+
+        # Transition to finishing state
+        handler.fsm.transition_to(
+            BallHandlerState.FINISHING,
+            ticks=self._rng.randint(3, 6),
+            target=basket,
+            intent=MovementIntent.SPRINT,
+            context={"finish_type": finish.finish_type.value},
+        )
+
+        # Resolve the finish
         finish_rating = max(
             player.attributes.finishing.layup,
             player.attributes.finishing.driving_dunk,
@@ -693,15 +1201,13 @@ class GameSimulator:
             shot_distance=max(new_dist, 2.0),
             contest_distance=def_dist,
             contest_quality=clamp(1.0 - def_dist / 5.0, 0.0, 1.0),
-            rim_protector_present=any(
-                d.player.attributes.defense.block > 70
-                for d in self.court.defensive_players(home_on_offense)
-                if d.position.distance_to(basket) < 8.0
-            ),
+            rim_protector_present=rim_protector,
             is_clutch=gs.clock.is_clutch_time(),
             clutch_rating=player.attributes.mental.clutch,
         )
         make_prob = calculate_shot_probability(ctx)
+        make_prob += finish.success_modifier
+        make_prob = clamp(make_prob, 0.05, 0.95)
         made = self._phys_rng.random() < make_prob
         stats = self._player_stats(player.id, is_home)
 
@@ -717,21 +1223,21 @@ class GameSimulator:
             else:
                 self.momentum.on_away_score(2)
 
-            is_dunk = (
-                player.attributes.finishing.driving_dunk > 70
-                and self._phys_rng.random() < 0.4
-            )
             if self.narration:
                 ev = self.narration.narrate_made_shot(
                     shooter=player.full_name,
                     team=self._team_name(is_home),
                     points=2, distance=new_dist, zone="paint",
                     lead=gs.score.diff if is_home else -gs.score.diff,
-                    is_dunk=is_dunk,
+                    is_dunk=finish.is_dunk,
                 )
                 self._emit("made_shot", ev, {"player_id": player.id, "points": 2})
-            if is_dunk:
+            if finish.is_dunk:
                 self.momentum.on_dunk(is_home)
+
+            # And-one check on drives
+            if self._phys_rng.random() < finish.foul_draw_chance:
+                self._free_throws(handler, 1, is_home)
         else:
             stats.record_missed_shot(is_three=False)
             self.confidence.on_missed_shot(player.id)
@@ -747,12 +1253,28 @@ class GameSimulator:
     def _execute_pass(
         self, handler: PlayerCourtState, target_id: int, home_on_offense: bool,
     ) -> bool:
-        """Execute a pass. Returns True if stolen (possession ends)."""
+        """Execute a pass with pass type selection. Returns True if stolen."""
         player = handler.player
         is_home = home_on_offense
         target = self.court.get_player_state(target_id)
         if target is None:
             return False
+
+        # Select pass type based on situation
+        dist = handler.position.distance_to(target.position)
+        basket = self.court.basket_position(home_on_offense)
+        target_dist_to_basket = target.position.distance_to(basket)
+
+        pass_type = self._select_pass_type(handler, target, dist, target_dist_to_basket)
+
+        # Update FSM to passing state
+        handler.fsm.transition_to(
+            BallHandlerState.PASSING,
+            ticks=self._rng.randint(3, 6),
+            target=target.position,
+            intent=MovementIntent.STAND,
+            context={"pass_type": pass_type.value, "target_id": target_id},
+        )
 
         defenders = self.court.defensive_players(home_on_offense)
         def_positions = [d.position for d in defenders]
@@ -762,30 +1284,88 @@ class GameSimulator:
             defender_positions=def_positions,
         )
 
-        # Adjust interception risk for passer skill
-        pass_skill = (
-            player.attributes.playmaking.pass_accuracy * 0.5
-            + player.attributes.playmaking.pass_vision * 0.3
-            + player.attributes.playmaking.pass_iq * 0.2
-        ) / 99.0
-        steal_chance = lane.interception_risk * (1.0 - pass_skill * 0.5)
+        # Use the full pass resolution system
+        def_dist = self.court.defender_distance(handler.player_id, home_on_offense)
+        result = resolve_pass(
+            pass_accuracy=player.attributes.playmaking.pass_accuracy,
+            pass_vision=player.attributes.playmaking.pass_vision,
+            receiver_hands=target.player.attributes.rebounding.box_out,  # Using as proxy
+            pass_type=pass_type,
+            distance=dist,
+            lane_quality=lane.quality,
+            is_under_pressure=def_dist < 3.0,
+            has_needle_threader=player.badges.has_badge("needle_threader"),
+            has_bail_out=player.badges.has_badge("bail_out"),
+            rng=self._phys_rng,
+        )
 
-        if self._phys_rng.random() < steal_chance:
-            # Stolen
-            stealer = min(
-                defenders,
-                key=lambda d: d.position.distance_to(
-                    (handler.position + target.position) * 0.5,
-                ),
-            ) if defenders else None
-            self._steal(handler, stealer, is_home)
+        if result.turnover:
+            if result.intercepted:
+                stealer = min(
+                    defenders,
+                    key=lambda d: d.position.distance_to(
+                        (handler.position + target.position) * 0.5,
+                    ),
+                ) if defenders else None
+                self._steal(handler, stealer, is_home)
+            else:
+                self._turnover(handler, is_home)
             return True
 
         # Successful pass
         self._last_passer_id = handler.player_id
         self.court.ball.holder_id = target_id
         self.court.ball.status = BallStatus.HELD
+
+        # Target enters receiving state then decides
+        target.fsm.transition_to(
+            OffBallOffenseState.RECEIVING_PASS,
+            ticks=self._rng.randint(3, 5),
+            target=target.position,
+            intent=MovementIntent.STAND,
+        )
+
+        # After receiving, new handler gets DRIBBLING_IN_PLACE or TRIPLE_THREAT
+        # This will be handled on the next tick when the FSM completes
+
+        # Consume pass time
+        pass_time = self._rng.uniform(0.5, 1.5)
+        self._advance_clock(pass_time)
+        if self._check_quarter_end():
+            return True
+
+        # Dimer badge: boost receiver's shooting
+        if player.badges.has_badge("dimer"):
+            target.fsm.context["dimer_boost"] = True
+
         return False
+
+    def _select_pass_type(
+        self,
+        handler: PlayerCourtState,
+        target: PlayerCourtState,
+        distance: float,
+        target_dist_to_basket: float,
+    ) -> PassType:
+        """Select the best pass type for the situation."""
+        # Short distance perimeter pass
+        if distance < 15.0 and target_dist_to_basket > 20.0:
+            return PassType.CHEST
+
+        # Entry pass to post
+        if target_dist_to_basket < 10.0:
+            return self._rng.choice([PassType.BOUNCE, PassType.LOB])
+
+        # Skip pass (long distance)
+        if distance > 25.0:
+            return self._rng.choice([PassType.BULLET, PassType.OVERHEAD])
+
+        # Kick-out from drive
+        if handler.fsm.current_state == BallHandlerState.DRIVING:
+            return PassType.BOUNCE
+
+        # Default
+        return self._rng.choice([PassType.CHEST, PassType.BOUNCE])
 
     def _execute_post_up(
         self, handler: PlayerCourtState, home_on_offense: bool,
@@ -796,11 +1376,20 @@ class GameSimulator:
         is_home = home_on_offense
         basket = self.court.basket_position(home_on_offense)
 
+        handler.fsm.transition_to(
+            BallHandlerState.POSTING_UP,
+            ticks=self._rng.randint(15, 30),
+            target=basket,
+            intent=MovementIntent.JOG,
+        )
+
         to_basket = (basket - handler.position).normalized()
         handler.position = Vec2(
             clamp(handler.position.x + to_basket.x * 3.0, 0, COURT_LENGTH),
             clamp(handler.position.y + to_basket.y * 3.0, 0, COURT_WIDTH),
         )
+        if handler.kinematics:
+            handler.kinematics.position = handler.position.copy()
         handler.energy.drain(ENERGY_DRAIN_SPRINT * 3)
         self._advance_clock(self._rng.uniform(2.0, 4.0))
 
@@ -904,14 +1493,11 @@ class GameSimulator:
 
         if is_oreb:
             stats.offensive_rebounds += 1
-            # Continue possession: don't flip
             self.court.ball.holder_id = pcs.player_id
             self.court.ball.status = BallStatus.HELD
-            # Offensive rebound resets shot clock to 14
             self.game_state.clock.shot_clock = min(14.0, self.game_state.clock.game_clock)
         else:
             stats.defensive_rebounds += 1
-            # Defensive rebound -- possession will flip after this shot attempt
 
     def _turnover(self, handler: PlayerCourtState, is_home: bool) -> None:
         stats = self._player_stats(handler.player_id, is_home)
@@ -972,6 +1558,17 @@ class GameSimulator:
                 self._emit("foul", ev, {})
         self._free_throws(handler, 2, is_home)
 
+    def _shot_clock_violation(self, home_on_offense: bool) -> None:
+        """Handle a shot clock violation."""
+        is_home = home_on_offense
+        team_stats = self.home_stats if is_home else self.away_stats
+        team_stats.turnovers += 1
+        if self.narration:
+            ev = NarrationEvent(
+                text=f"Shot clock violation! Turnover, {self._team_name(not is_home)} ball.",
+            )
+            self._emit("shot_clock_violation", ev, {})
+
     def _free_throws(self, shooter: PlayerCourtState, count: int, is_home: bool) -> None:
         gs = self.game_state
         player = shooter.player
@@ -995,13 +1592,14 @@ class GameSimulator:
 
     # -- Energy ---------------------------------------------------------------
 
-    def _drain_energy_for_time(self, seconds: float) -> None:
-        ticks = int(seconds / TICK_DURATION)
+    def _drain_energy_for_ticks(self, num_ticks: int) -> None:
+        """Drain energy for on-court players for a given number of ticks."""
         for pcs in self.court.all_on_court():
-            pcs.energy.drain(ENERGY_DRAIN_JOG * ticks)
+            pcs.energy.drain(ENERGY_DRAIN_JOG * num_ticks)
         for pcs in self.court.home_bench + self.court.away_bench:
-            pcs.energy.recover(ENERGY_RECOVERY_BENCH * ticks)
+            pcs.energy.recover(ENERGY_RECOVERY_BENCH * num_ticks)
         # Track minutes
+        seconds = num_ticks * TICK_DURATION
         for pcs in self.court.all_on_court():
             pcs.minutes_played += seconds / 60.0
 
@@ -1056,6 +1654,8 @@ class GameSimulator:
             bench.append(out_pcs)
             if self.court.ball.holder_id == out_pcs.player_id:
                 self.court.ball.holder_id = in_pcs.player_id
+            # Initialize kinematics for incoming player
+            in_pcs.init_kinematics()
 
     def _call_timeout(self, is_home: bool) -> None:
         gs = self.game_state
@@ -1075,6 +1675,19 @@ class GameSimulator:
             self._emit("timeout", ev, {})
 
     # -- Helpers --------------------------------------------------------------
+
+    @staticmethod
+    def _intent_to_movement_type(intent: MovementIntent) -> MovementType:
+        """Convert FSM movement intent to physics movement type."""
+        mapping = {
+            MovementIntent.STAND: MovementType.STAND,
+            MovementIntent.WALK: MovementType.WALK,
+            MovementIntent.JOG: MovementType.JOG,
+            MovementIntent.SPRINT: MovementType.SPRINT,
+            MovementIntent.LATERAL: MovementType.LATERAL,
+            MovementIntent.BACKPEDAL: MovementType.BACKPEDAL,
+        }
+        return mapping.get(intent, MovementType.JOG)
 
     def _player_stats(self, player_id: int, is_home: bool):
         tracker = self.home_stats if is_home else self.away_stats
