@@ -169,14 +169,25 @@ class LeagueHubScreen(Screen):
         )
 
     def _quick_sim_game(self, game: "ScheduledGame") -> None:
-        """Quick-sim a game with simple random scores."""
-        from hoops_sim.utils.rng import SeededRNG
+        """Quick-sim a game using the real GameSimulator at max speed."""
+        from hoops_sim.engine.simulator import GameSimulator
 
-        rng = SeededRNG(seed=self.seed + game.game_id)
-        home_score = rng.randint(85, 130)
-        away_score = rng.randint(85, 130)
-        # Avoid ties
-        while home_score == away_score:
+        home_team = self.league.get_team(game.home_team_id)
+        away_team = self.league.get_team(game.away_team_id)
+        if not home_team or not away_team:
+            return
+
+        sim = GameSimulator(
+            home_team=home_team,
+            away_team=away_team,
+            seed=self.seed + game.game_id,
+            narrate=False,
+        )
+        result = sim.simulate_full_game()
+        home_score = result.home_score
+        away_score = result.away_score
+        # Avoid ties (overtime should handle this, but just in case)
+        if home_score == away_score:
             home_score += 1
         game.record_result(home_score, away_score)
 
