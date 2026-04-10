@@ -63,7 +63,34 @@ from hoops_sim.engine.possession import PossessionState
 from hoops_sim.engine.situational import evaluate_situation
 from hoops_sim.models.stats import TeamGameStats
 from hoops_sim.models.team import Team
+from hoops_sim.narration.broadcast_mixer import BroadcastLine, BroadcastMixer
+from hoops_sim.narration.color_commentary import ColorCommentaryNarrator
 from hoops_sim.narration.engine import NarrationEngine, NarrationEvent
+from hoops_sim.narration.events import (
+    BallAdvanceEvent,
+    BlockEvent,
+    DribbleMoveEvent,
+    DriveEvent,
+    FoulEvent,
+    FreeThrowEvent,
+    MilestoneEvent,
+    MomentumEvent,
+    MomentumKind,
+    PassEvent,
+    PossessionStartEvent,
+    QuarterBoundaryEvent,
+    QuarterEventKind,
+    ReboundEvent,
+    ScreenEvent,
+    ShotResultEvent,
+    SubstitutionEvent,
+    TimeoutEvent,
+    TurnoverEvent,
+)
+from hoops_sim.narration.narrative_arc import NarrativeArcTracker
+from hoops_sim.narration.play_by_play import PlayByPlayNarrator
+from hoops_sim.narration.possession_narrator import PossessionNarrator
+from hoops_sim.narration.stat_tracker import LiveStatTracker
 from hoops_sim.physics.kinematics import MovementType
 from hoops_sim.physics.vec import Vec2
 from hoops_sim.plays.playbook import (
@@ -155,6 +182,28 @@ class GameSimulator:
         self.momentum = MomentumTracker()
         self.confidence = ConfidenceTracker()
 
+        # Broadcast-quality narration system
+        self.broadcast_stats: LiveStatTracker | None = None
+        self.broadcast_mixer: BroadcastMixer | None = None
+        if narrate:
+            self.broadcast_stats = LiveStatTracker(
+                home_team=home_team.full_name,
+                away_team=away_team.full_name,
+            )
+            arc_tracker = NarrativeArcTracker(
+                home_team=home_team.full_name,
+                away_team=away_team.full_name,
+                stat_tracker=self.broadcast_stats,
+            )
+            pbp = PlayByPlayNarrator(self._rng, self.broadcast_stats)
+            color = ColorCommentaryNarrator(self._rng, self.broadcast_stats, arc_tracker)
+            possession_narrator = PossessionNarrator(pbp, color)
+            self.broadcast_mixer = BroadcastMixer(
+                possession_narrator=possession_narrator,
+                stat_tracker=self.broadcast_stats,
+                arc_tracker=arc_tracker,
+            )
+
         # Stats
         self.home_stats = TeamGameStats(team_id=home_team.id, team_name=home_team.full_name)
         self.away_stats = TeamGameStats(team_id=away_team.id, team_name=away_team.full_name)
@@ -239,6 +288,10 @@ class GameSimulator:
         # Set up the possession
         self._setup_possession(home_on_offense)
 
+        # Start broadcast possession tracking
+        if self.broadcast_mixer is not None:
+            self.broadcast_mixer.start_possession(gs.clock.quarter, gs.clock.game_clock)
+
         # Evaluate situation for tactical modifiers
         situation_type, sit_mods = evaluate_situation(
             game_clock=gs.clock.game_clock,
@@ -250,14 +303,34 @@ class GameSimulator:
 
         # Phase 1: Bring the ball up court (3-6 seconds)
         bring_up_ticks = self._rng.randint(30, 60)
+        handler = self._get_ball_handler(home_on_offense)
+        handler_name = handler.player.full_name if handler else ""
+        self._broadcast_event(BallAdvanceEvent(
+            ball_handler_name=handler_name,
+            is_transition=False,
+            seconds_to_advance=bring_up_ticks * TICK_DURATION,
+            **self._make_base_fields(),
+        ))
         self._advance_clock(bring_up_ticks * TICK_DURATION)
         self._drain_energy_for_ticks(bring_up_ticks)
         if self._check_quarter_end():
+            if self.broadcast_mixer is not None:
+                self.broadcast_mixer.end_possession()
             return
 
         # Phase 2: Coach selects play
         self._current_play = self._select_play(home_on_offense, situation_type)
         self._assign_play_roles(home_on_offense)
+
+        # Emit possession start event
+        self._broadcast_event(PossessionStartEvent(
+            ball_handler_name=handler_name,
+            ball_handler_id=handler.player_id if handler else 0,
+            offensive_team=self._team_name(is_home),
+            defensive_team=self._team_name(not is_home),
+            play_call=self._current_play.name if self._current_play else "",
+            **self._make_base_fields(),
+        ))
 
         # Phase 3: Micro-action tick loop
         self._possession_events = []
@@ -627,6 +700,9 @@ class GameSimulator:
 
     def _end_possession_and_flip(self) -> None:
         """Flip possession to the other team."""
+        # End broadcast possession
+        if self.broadcast_mixer is not None:
+            self.broadcast_mixer.end_possession()
         old_off = self._off_team_id
         old_def = self._def_team_id
         self._off_team_id = old_def
@@ -646,6 +722,15 @@ class GameSimulator:
 
         self._quarter += 1
 
+        q_kind = QuarterEventKind.HALFTIME if self._quarter == 3 else QuarterEventKind.QUARTER_END
+        base = self._make_base_fields()
+        base["quarter"] = self._quarter - 1  # Override with ended quarter
+        self._broadcast_event(QuarterBoundaryEvent(
+            kind=q_kind,
+            home_team=self.home_team.full_name,
+            away_team=self.away_team.full_name,
+            **base,
+        ))
         if self.narration:
             event = self.narration.narrate_quarter_end(
                 quarter=self._quarter - 1,
@@ -880,6 +965,21 @@ class GameSimulator:
         # Apply results
         handler.energy.drain(result.energy_cost)
 
+        # Emit rich dribble move event
+        def_name = closest_def.player.full_name if closest_def else ""
+        self._broadcast_event(DribbleMoveEvent(
+            player_name=player.full_name,
+            player_id=player.id,
+            move_type=move_type.value,
+            success=result.success,
+            separation_gained=result.separation,
+            ankle_breaker=result.ankle_breaker,
+            defender_name=def_name,
+            combo_count=handler.fsm.combo_count,
+            turnover=result.turnover,
+            **self._make_base_fields(),
+        ))
+
         if result.success:
             handler.fsm.defender_separation += result.separation
             handler.fsm.increment_combo(True)
@@ -1052,6 +1152,40 @@ class GameSimulator:
             foul_chance = contest_quality * 0.12 * (player.attributes.finishing.draw_foul / 99.0)
             is_and_one = self._phys_rng.random() < foul_chance
 
+            # Emit rich shot result event + update broadcast stats
+            assist_name = ""
+            if self._last_passer_id and self._last_passer_id != player.id:
+                passer_pcs = self.court.get_player_state(self._last_passer_id)
+                if passer_pcs:
+                    assist_name = passer_pcs.player.full_name
+                    if self.broadcast_stats:
+                        self.broadcast_stats.on_assist(
+                            self._last_passer_id, assist_name,
+                        )
+
+            if self.broadcast_stats:
+                self.broadcast_stats.on_made_shot(
+                    player.id, player.full_name, is_home,
+                    points, is_three, gs.clock.game_clock,
+                )
+
+            self._broadcast_event(ShotResultEvent(
+                shooter_name=player.full_name,
+                shooter_id=player.id,
+                made=True,
+                points=points,
+                distance=dist,
+                zone=zone_info.name,
+                is_three=is_three,
+                is_and_one=is_and_one,
+                team_name=self._team_name(is_home),
+                new_score_home=gs.score.home,
+                new_score_away=gs.score.away,
+                lead=gs.score.diff if is_home else -gs.score.diff,
+                assist_player_name=assist_name,
+                **self._make_base_fields(),
+            ))
+
             if self.narration:
                 ev = self.narration.narrate_made_shot(
                     shooter=player.full_name,
@@ -1073,6 +1207,10 @@ class GameSimulator:
         else:
             stats.record_missed_shot(is_three=is_three)
             self.confidence.on_missed_shot(player.id)
+            if self.broadcast_stats:
+                self.broadcast_stats.on_missed_shot(
+                    player.id, player.full_name, is_home, is_three,
+                )
 
             # Block check
             blocked = False
@@ -1083,6 +1221,17 @@ class GameSimulator:
                     blocked = True
                     blk_stats = self._player_stats(closest_def.player_id, not is_home)
                     blk_stats.blocks += 1
+                    if self.broadcast_stats:
+                        self.broadcast_stats.on_block(
+                            closest_def.player_id, closest_def.player.full_name,
+                        )
+                    self._broadcast_event(BlockEvent(
+                        blocker_name=closest_def.player.full_name,
+                        blocker_id=closest_def.player_id,
+                        shooter_name=player.full_name,
+                        shooter_id=player.id,
+                        **self._make_base_fields(),
+                    ))
                     if self.narration:
                         ev = self.narration.narrate_block(
                             blocker=closest_def.player.full_name,
@@ -1090,11 +1239,25 @@ class GameSimulator:
                         )
                         self._emit("block", ev, {})
 
-            if not blocked and self.narration:
-                ev = self.narration.narrate_missed_shot(
-                    shooter=player.full_name, distance=dist, zone=zone_info.name,
-                )
-                self._emit("missed_shot", ev, {"player_id": player.id})
+            if not blocked:
+                self._broadcast_event(ShotResultEvent(
+                    shooter_name=player.full_name,
+                    shooter_id=player.id,
+                    made=False,
+                    points=0,
+                    distance=dist,
+                    zone=zone_info.name,
+                    is_three=is_three,
+                    team_name=self._team_name(is_home),
+                    new_score_home=gs.score.home,
+                    new_score_away=gs.score.away,
+                    **self._make_base_fields(),
+                ))
+                if self.narration:
+                    ev = self.narration.narrate_missed_shot(
+                        shooter=player.full_name, distance=dist, zone=zone_info.name,
+                    )
+                    self._emit("missed_shot", ev, {"player_id": player.id})
 
             # Rebound
             self._resolve_rebound(home_on_offense)
@@ -1499,6 +1662,15 @@ class GameSimulator:
         else:
             stats.defensive_rebounds += 1
 
+        if self.broadcast_stats:
+            self.broadcast_stats.on_rebound(pcs.player_id, pcs.player.full_name, is_oreb)
+        self._broadcast_event(ReboundEvent(
+            rebounder_name=pcs.player.full_name,
+            rebounder_id=pcs.player_id,
+            is_offensive=is_oreb,
+            **self._make_base_fields(),
+        ))
+
     def _turnover(self, handler: PlayerCourtState, is_home: bool) -> None:
         stats = self._player_stats(handler.player_id, is_home)
         stats.turnovers += 1
@@ -1506,6 +1678,15 @@ class GameSimulator:
         team_stats.turnovers += 1
         self.confidence.on_turnover(handler.player_id)
         self.momentum.on_turnover(is_home)
+        if self.broadcast_stats:
+            self.broadcast_stats.on_turnover(handler.player_id, handler.player.full_name)
+        self._broadcast_event(TurnoverEvent(
+            player_name=handler.player.full_name,
+            player_id=handler.player_id,
+            is_steal=False,
+            team_name=self._team_name(is_home),
+            **self._make_base_fields(),
+        ))
         if self.narration:
             ev = self.narration.narrate_turnover(
                 player=handler.player.full_name, team=self._team_name(is_home),
@@ -1527,6 +1708,20 @@ class GameSimulator:
             s_stats.steals += 1
             stealer_name = stealer.player.full_name
             self.momentum.on_steal(not is_home)
+            if self.broadcast_stats:
+                self.broadcast_stats.on_steal(stealer.player_id, stealer_name)
+
+        if self.broadcast_stats:
+            self.broadcast_stats.on_turnover(handler.player_id, handler.player.full_name)
+        self._broadcast_event(TurnoverEvent(
+            player_name=handler.player.full_name,
+            player_id=handler.player_id,
+            is_steal=True,
+            stealer_name=stealer_name,
+            stealer_id=stealer.player_id if stealer else 0,
+            team_name=self._team_name(is_home),
+            **self._make_base_fields(),
+        ))
 
         if self.narration:
             ev = self.narration.narrate_turnover(
@@ -1548,6 +1743,19 @@ class GameSimulator:
                 gs.away_team_fouls += 1
             else:
                 gs.home_team_fouls += 1
+            if self.broadcast_stats:
+                self.broadcast_stats.on_foul(closest.player_id, closest.player.full_name)
+            self._broadcast_event(FoulEvent(
+                fouler_name=closest.player.full_name,
+                fouler_id=closest.player_id,
+                victim_name=handler.player.full_name,
+                victim_id=handler.player_id,
+                team_fouls=gs.away_team_fouls if is_home else gs.home_team_fouls,
+                personal_fouls=closest.fouls,
+                free_throws_awarded=2,
+                is_foul_trouble=closest.fouls >= 4,
+                **self._make_base_fields(),
+            ))
             if self.narration:
                 ev = self.narration.narrate_foul(
                     fouler=closest.player.full_name,
@@ -1584,8 +1792,21 @@ class GameSimulator:
                 gs.score.add_points(is_home, 1, gs.clock.quarter)
                 team_stats = self.home_stats if is_home else self.away_stats
                 team_stats.points += 1
+                if self.broadcast_stats:
+                    self.broadcast_stats.on_made_shot(
+                        player.id, player.full_name, is_home, 1, False,
+                        gs.clock.game_clock,
+                    )
             else:
                 stats.record_missed_ft()
+            self._broadcast_event(FreeThrowEvent(
+                shooter_name=player.full_name,
+                shooter_id=player.id,
+                made=made,
+                attempt_number=_ + 1,
+                total_attempts=count,
+                **self._make_base_fields(),
+            ))
             if self.narration:
                 ev = self.narration.narrate_free_throw(shooter=player.full_name, made=made)
                 self._emit("free_throw", ev, {"made": made})
@@ -1656,6 +1877,15 @@ class GameSimulator:
                 self.court.ball.holder_id = in_pcs.player_id
             # Initialize kinematics for incoming player
             in_pcs.init_kinematics()
+            # Emit substitution event
+            self._broadcast_event(SubstitutionEvent(
+                player_in_name=in_pcs.player.full_name,
+                player_in_id=in_pcs.player_id,
+                player_out_name=out_pcs.player.full_name,
+                player_out_id=out_pcs.player_id,
+                team_name=self._team_name(is_home),
+                **self._make_base_fields(),
+            ))
 
     def _call_timeout(self, is_home: bool) -> None:
         gs = self.game_state
@@ -1667,8 +1897,15 @@ class GameSimulator:
         on_court = self.court.home_on_court if is_home else self.court.away_on_court
         for pcs in on_court:
             pcs.energy.recover(2.0)
+        remaining = gs.home_timeouts if is_home else gs.away_timeouts
+        self._broadcast_event(TimeoutEvent(
+            team_name=self._team_name(is_home),
+            timeouts_remaining=remaining,
+            opponent_run=self._opponent_run,
+            score_diff=gs.score.diff if is_home else -gs.score.diff,
+            **self._make_base_fields(),
+        ))
         if self.narration:
-            remaining = gs.home_timeouts if is_home else gs.away_timeouts
             ev = self.narration.narrate_timeout(
                 team=self._team_name(is_home), remaining=remaining,
             )
@@ -1704,3 +1941,20 @@ class GameSimulator:
 
     def _emit(self, event_type: str, narration: NarrationEvent, data: dict) -> None:
         self._events.append(SimEvent(narration=narration, event_type=event_type, data=data))
+
+    def _broadcast_event(self, event) -> None:
+        """Feed a rich narration event into the broadcast mixer."""
+        if self.broadcast_mixer is not None:
+            self.broadcast_mixer.add_event(event)
+
+    def _make_base_fields(self) -> dict:
+        """Return common fields for narration events."""
+        gs = self.game_state
+        return {
+            "game_clock": gs.clock.game_clock,
+            "shot_clock": gs.clock.shot_clock,
+            "quarter": gs.clock.quarter,
+            "home_score": gs.score.home,
+            "away_score": gs.score.away,
+            "possession_id": self._total_possessions,
+        }
