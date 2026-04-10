@@ -5,11 +5,7 @@ Redesigned with figlet-style banner, hotkey grid, and recent save panel.
 
 from __future__ import annotations
 
-from textual.app import ComposeResult
-from textual.containers import Center, Vertical
-from textual.screen import Screen
-from textual.widgets import Button, Footer, Header, Label
-
+from hoops_sim.tui.base import Screen, console
 from hoops_sim.tui.theme import BANNER_GRADIENT
 
 # Figlet-style banner with gradient coloring
@@ -49,46 +45,26 @@ class MainMenuScreen(Screen):
         ("q", "quit", "Quit"),
     ]
 
-    def compose(self) -> ComposeResult:
-        yield Header()
-        with Center(id="main-menu"):
-            with Vertical(id="main-menu-buttons"):
-                yield Label(
-                    _gradient_banner(),
-                    id="main-menu-title",
-                )
-                yield Label(
-                    "Maximum Fidelity Basketball Simulator",
-                    id="main-menu-subtitle",
-                )
-                yield Label("")
-                yield Label(
-                    "  [bold green][N][/] New Season    "
-                    "[bold blue][G][/] Quick Game"
-                )
-                yield Label(
-                    "  [bold yellow][S][/] Settings      "
-                    "[bold red][Q][/] Quit"
-                )
-                yield Label("")
+    def render(self) -> str:
+        return (
+            f"{_gradient_banner()}\n"
+            "Maximum Fidelity Basketball Simulator\n\n"
+            "  [bold green][N][/] New Season    "
+            "[bold blue][G][/] Quick Game\n"
+            "  [bold yellow][S][/] Settings      "
+            "[bold red][Q][/] Quit\n"
+        )
 
-                # Hotkey buttons as fallback for click/touch
-                with Vertical(id="main-menu-hotkeys"):
-                    yield Button("New Season", id="btn-new-season", variant="primary")
-                    yield Button("Quick Game", id="btn-quick-game", variant="default")
-                    yield Button("Settings", id="btn-settings", variant="default")
-                    yield Button("Quit", id="btn-quit", variant="error")
-        yield Footer()
-
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "btn-new-season":
+    def handle_input(self, choice: str) -> None:
+        c = choice.strip().lower()
+        if c == "n":
             self.action_new_season()
-        elif event.button.id == "btn-quick-game":
+        elif c == "g":
             self.action_quick_game()
-        elif event.button.id == "btn-settings":
+        elif c == "s":
             self.action_settings()
-        elif event.button.id == "btn-quit":
-            self.app.exit()
+        elif c == "q":
+            self.action_quit()
 
     def action_new_season(self) -> None:
         from hoops_sim.tui.screens.season_setup import SeasonSetupScreen
@@ -100,7 +76,6 @@ class MainMenuScreen(Screen):
         from hoops_sim.tui.screens.live_game import LiveGameScreen
         from hoops_sim.utils.rng import SeededRNG
 
-        # Generate two random teams for a quick game
         rng = SeededRNG()
         league = generate_league(num_teams=2, rng=rng)
         home = league.teams[0]

@@ -2,35 +2,12 @@
 
 from __future__ import annotations
 
-from textual.app import ComposeResult
-from textual.reactive import reactive
-from textual.widget import Widget
-from textual.widgets import Label
-
+from hoops_sim.tui.base import Widget
 from hoops_sim.tui.theme import MOMENTUM_AWAY, MOMENTUM_HOME, MOMENTUM_NEUTRAL
 
 
 class ContextStrip(Widget):
-    """Bottom strip showing game context: momentum, play, possession, fouls, energy.
-
-    Uses reactive properties for efficient updates on possession/play changes.
-    """
-
-    DEFAULT_CSS = """
-    ContextStrip {
-        height: 2;
-        width: 100%;
-        background: $primary-background;
-        padding: 0 1;
-    }
-    """
-
-    momentum: reactive[float] = reactive(0.0)
-    current_play: reactive[str] = reactive("Half-Court Set")
-    possession_team: reactive[str] = reactive("")
-    home_fouls: reactive[int] = reactive(0)
-    away_fouls: reactive[int] = reactive(0)
-    lowest_energy: reactive[str] = reactive("")
+    """Bottom strip showing game context: momentum, play, possession, fouls, energy."""
 
     def __init__(
         self,
@@ -44,14 +21,15 @@ class ContextStrip(Widget):
         super().__init__(name=name, id=id, classes=classes)
         self._home_name = home_name
         self._away_name = away_name
+        self.momentum = 0.0
+        self.current_play = "Half-Court Set"
+        self.possession_team = ""
+        self.home_fouls = 0
+        self.away_fouls = 0
+        self.lowest_energy = ""
 
-    def compose(self) -> ComposeResult:
-        yield Label("", id="ctx-line1")
-        yield Label("", id="ctx-line2")
-
-    def _render(self) -> tuple[str, str]:
-        """Build both context lines."""
-        # Line 1: Momentum bar
+    def render(self) -> str:
+        """Build the context strip."""
         bar_len = 20
         center = bar_len // 2
         clamped = max(-5.0, min(5.0, self.momentum))
@@ -79,39 +57,12 @@ class ContextStrip(Widget):
         if self.lowest_energy:
             line1 += f"  | EN: {self.lowest_energy}"
 
-        # Line 2: Play, possession, fouls
         line2 = (
             f"PLAY: {self.current_play:<20} | "
             f"POSS: {self.possession_team:<6} | "
             f"FOULS: {self.away_fouls}-{self.home_fouls}"
         )
-        return line1, line2
-
-    def _update_display(self) -> None:
-        try:
-            line1, line2 = self._render()
-            self.query_one("#ctx-line1", Label).update(line1)
-            self.query_one("#ctx-line2", Label).update(line2)
-        except Exception:
-            pass
-
-    def on_mount(self) -> None:
-        self._update_display()
-
-    def watch_momentum(self, _v: float) -> None:
-        self._update_display()
-
-    def watch_current_play(self, _v: str) -> None:
-        self._update_display()
-
-    def watch_possession_team(self, _v: str) -> None:
-        self._update_display()
-
-    def watch_home_fouls(self, _v: int) -> None:
-        self._update_display()
-
-    def watch_away_fouls(self, _v: int) -> None:
-        self._update_display()
+        return f"{line1}\n{line2}"
 
     def update_context(
         self,

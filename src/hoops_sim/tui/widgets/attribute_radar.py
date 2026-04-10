@@ -2,11 +2,7 @@
 
 from __future__ import annotations
 
-from textual.app import ComposeResult
-from textual.containers import Vertical
-from textual.widget import Widget
-from textual.widgets import Label
-
+from hoops_sim.tui.base import Widget
 from hoops_sim.tui.theme import rating_color
 
 
@@ -15,14 +11,6 @@ class AttributeRadar(Widget):
 
     Shows a horizontal bar chart summarizing each category with
     color gradient based on rating value.
-    """
-
-    DEFAULT_CSS = """
-    AttributeRadar {
-        height: auto;
-        width: 100%;
-        padding: 0;
-    }
     """
 
     def __init__(
@@ -36,18 +24,16 @@ class AttributeRadar(Widget):
         super().__init__(name=name, id=id, classes=classes)
         self._categories = categories or {}
 
-    def compose(self) -> ComposeResult:
-        with Vertical():
-            for cat_name, value in self._categories.items():
-                bar_w = value // 5
-                color = rating_color(value)
-                filled = "\u2588" * bar_w
-                empty = "\u2591" * (20 - bar_w)
-                yield Label(
-                    f"{cat_name:<14} [{color}]{filled}[/]{empty} {value:>3}"
-                )
+    def render(self) -> str:
+        lines = []
+        for cat_name, value in self._categories.items():
+            bar_w = value // 5
+            color = rating_color(value)
+            filled = "\u2588" * bar_w
+            empty = "\u2591" * (20 - bar_w)
+            lines.append(f"{cat_name:<14} [{color}]{filled}[/]{empty} {value:>3}")
+        return "\n".join(lines)
 
     def update_categories(self, categories: dict[str, int]) -> None:
         """Update the radar chart data."""
         self._categories = categories
-        self.refresh(recompose=True)

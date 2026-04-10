@@ -2,37 +2,14 @@
 
 from __future__ import annotations
 
-from textual.app import ComposeResult
-from textual.reactive import reactive
-from textual.widget import Widget
-from textual.widgets import Label
+from hoops_sim.tui.base import Widget
 
 
 class BroadcastScoreboard(Widget):
     """TV-style scoreboard: quarter, clock, shot clock, team names, scores.
 
     Single horizontal strip optimized for the top of the live game screen.
-    Uses reactive properties for efficient per-tick updates.
     """
-
-    DEFAULT_CSS = """
-    BroadcastScoreboard {
-        height: 3;
-        width: 100%;
-        background: $primary-background;
-        layout: horizontal;
-        align: center middle;
-        padding: 0 1;
-    }
-    """
-
-    home_score: reactive[int] = reactive(0)
-    away_score: reactive[int] = reactive(0)
-    quarter: reactive[int] = reactive(1)
-    game_clock: reactive[str] = reactive("12:00.0")
-    shot_clock: reactive[str] = reactive("24")
-    is_overtime: reactive[bool] = reactive(False)
-    possession_home: reactive[bool] = reactive(True)
 
     def __init__(
         self,
@@ -50,54 +27,28 @@ class BroadcastScoreboard(Widget):
         self._away_name = away_name
         self._home_abbr = home_abbr
         self._away_abbr = away_abbr
+        self.home_score = 0
+        self.away_score = 0
+        self.quarter = 1
+        self.game_clock = "12:00.0"
+        self.shot_clock = "24"
+        self.is_overtime = False
+        self.possession_home = True
 
-    def compose(self) -> ComposeResult:
-        yield Label("", id="bs-display")
-
-    def _render_scoreboard(self) -> str:
+    def render(self) -> str:
         """Build the full scoreboard string."""
         period = (
             f"OT{self.quarter - 4}" if self.is_overtime else f"Q{self.quarter}"
         )
         poss_arrow = "\u25b6" if self.possession_home else "\u25c0"
-        away_str = f"{self._away_abbr}"
-        home_str = f"{self._home_abbr}"
-
         return (
             f"  {period} | "
             f"[bold]{self.game_clock}[/] | "
             f"Shot: [yellow]{self.shot_clock}[/]  "
-            f"   {away_str} [bold]{self.away_score:>3}[/]"
+            f"   {self._away_abbr} [bold]{self.away_score:>3}[/]"
             f"  {poss_arrow}  "
-            f"[bold]{self.home_score:<3}[/] {home_str}"
+            f"[bold]{self.home_score:<3}[/] {self._home_abbr}"
         )
-
-    def _update_display(self) -> None:
-        try:
-            self.query_one("#bs-display", Label).update(self._render_scoreboard())
-        except Exception:
-            pass
-
-    def on_mount(self) -> None:
-        self._update_display()
-
-    def watch_home_score(self, _v: int) -> None:
-        self._update_display()
-
-    def watch_away_score(self, _v: int) -> None:
-        self._update_display()
-
-    def watch_quarter(self, _v: int) -> None:
-        self._update_display()
-
-    def watch_game_clock(self, _v: str) -> None:
-        self._update_display()
-
-    def watch_shot_clock(self, _v: str) -> None:
-        self._update_display()
-
-    def watch_possession_home(self, _v: bool) -> None:
-        self._update_display()
 
     def update_state(
         self,

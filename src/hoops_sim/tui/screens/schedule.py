@@ -1,33 +1,18 @@
-"""Schedule screen -- week calendar grid view of SeasonSchedule.
-
-Redesigned with weekly calendar grid and season progress bar.
-"""
+"""Schedule screen -- week calendar grid view of SeasonSchedule."""
 
 from __future__ import annotations
 
 from typing import Optional, Tuple
 
-from textual.app import ComposeResult
-from textual.containers import Vertical
-from textual.screen import Screen
-from textual.widgets import Button, Footer, Header, Label
-
 from hoops_sim.models.league import League
 from hoops_sim.season.schedule import SeasonSchedule
+from hoops_sim.tui.base import Screen
 from hoops_sim.tui.widgets.season_progress import SeasonProgressBar
 from hoops_sim.tui.widgets.week_calendar import WeekCalendarGrid
 
 
 class ScheduleScreen(Screen):
-    """Calendar view of the season schedule with week navigation.
-
-    Features:
-    - Week calendar grid instead of flat list
-    - Navigate weeks with [ and ]
-    - Played games show W/L + score, color-coded
-    - Today's game highlighted
-    - Season progress bar
-    """
+    """Calendar view of the season schedule with week navigation."""
 
     BINDINGS = [
         ("escape", "go_back", "Back"),
@@ -49,52 +34,38 @@ class ScheduleScreen(Screen):
         self.user_team_id = user_team_id or (
             league.teams[0].id if league.teams else 0
         )
-        # Start the week view centered on the current day
         self._week_start = max(1, current_day - (current_day - 1) % 7)
 
-    def compose(self) -> ComposeResult:
-        yield Header()
-        with Vertical(id="schedule-screen"):
-            yield Label(
-                f"[bold]Season Schedule -- Day {self.current_day}[/]",
-                classes="screen-header",
-            )
-            yield Button("< Back", id="btn-back", classes="back-button")
+    def render(self) -> str:
+        lines = [
+            f"[bold]Season Schedule -- Day {self.current_day}[/]",
+            "  [bold][[/] Prev Week    [bold]][/] Next Week    [bold red][B][/] Back",
+            "",
+        ]
 
-            yield Label(
-                "  [bold][[/] Prev Week    [bold]][/] Next Week",
-            )
+        day_games = self._build_week_games()
+        wc = WeekCalendarGrid(
+            week_start=self._week_start,
+            current_day=self.current_day,
+            day_games=day_games,
+        )
+        lines.append(wc.render())
+        lines.append("")
 
-            # Week calendar
-            day_games = self._build_week_games()
-            yield WeekCalendarGrid(
-                week_start=self._week_start,
-                current_day=self.current_day,
-                day_games=day_games,
-                id="week-grid",
+        games_played = sum(
+            1
+            for g in self.schedule.games
+            if g.played
+            and (
+                g.home_team_id == self.user_team_id
+                or g.away_team_id == self.user_team_id
             )
-
-            yield Label("")
-
-            # Season progress
-            games_played = sum(
-                1
-                for g in self.schedule.games
-                if g.played
-                and (
-                    g.home_team_id == self.user_team_id
-                    or g.away_team_id == self.user_team_id
-                )
-            )
-            yield SeasonProgressBar(
-                games_played=games_played,
-                total_games=82,
-                id="season-progress",
-            )
-        yield Footer()
+        )
+        sp = SeasonProgressBar(games_played=games_played, total_games=82)
+        lines.append(sp.render())
+        return "\n".join(lines)
 
     def _build_week_games(self):
-        """Build day_games dict for the current week."""
         day_games = {}
         team_names = {t.id: t.full_name for t in self.league.teams}
 
@@ -107,51 +78,32 @@ class ScheduleScreen(Screen):
                     or game.away_team_id == self.user_team_id
                 ):
                     is_home = game.home_team_id == self.user_team_id
-                    opp_id = (
-                        game.away_team_id if is_home else game.home_team_id
-                    )
+                    opp_id = game.away_team_id if is_home else game.home_team_id
                     opp_name = team_names.get(opp_id, f"Team {opp_id}")
                     ha = "vs" if is_home else "@"
 
                     if game.played:
                         day_games[day] = (
-                            ha,
-                            opp_name,
-                            game.home_score,
-                            game.away_score,
-                            is_home,
+                            ha, opp_name, game.home_score, game.away_score, is_home,
                         )
                     else:
                         day_games[day] = (ha, opp_name, None, None, is_home)
         return day_games
 
+    def handle_input(self, choice: str) -> None:
+        c = choice.strip().lower()
+        if c == "[":
+            self.action_prev_week()
+        elif c == "]":
+            self.action_next_week()
+        elif c == "b":
+            self.action_go_back()
+
     def action_prev_week(self) -> None:
-        """Navigate to previous week."""
         self._week_start = max(1, self._week_start - 7)
-        self.app.switch_screen(
-            ScheduleScreen(
-                schedule=self.schedule,
-                league=self.league,
-                current_day=self.current_day,
-                user_team_id=self.user_team_id,
-            )
-        )
 
     def action_next_week(self) -> None:
-        """Navigate to next week."""
         self._week_start += 7
-        self.app.switch_screen(
-            ScheduleScreen(
-                schedule=self.schedule,
-                league=self.league,
-                current_day=self.current_day,
-                user_team_id=self.user_team_id,
-            )
-        )
-
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "btn-back":
-            self.action_go_back()
 
     def action_go_back(self) -> None:
         self.app.pop_screen()

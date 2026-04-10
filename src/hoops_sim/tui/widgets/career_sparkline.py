@@ -4,9 +4,7 @@ from __future__ import annotations
 
 from typing import List
 
-from textual.app import ComposeResult
-from textual.widget import Widget
-from textual.widgets import Label
+from hoops_sim.tui.base import Widget
 
 # Braille/block sparkline characters (8 levels)
 _SPARK_CHARS = "\u2581\u2582\u2583\u2584\u2585\u2586\u2587\u2588"
@@ -20,7 +18,6 @@ def sparkline(values: List[float], width: int = 20) -> str:
     if not values:
         return ""
 
-    # Resample to fit width if needed
     if len(values) > width:
         step = len(values) / width
         sampled = [values[int(i * step)] for i in range(width)]
@@ -40,17 +37,7 @@ def sparkline(values: List[float], width: int = 20) -> str:
 
 
 class CareerSparkline(Widget):
-    """Compact braille-character sparkline for career stat trends.
-
-    Shows a single-line sparkline with a label prefix.
-    """
-
-    DEFAULT_CSS = """
-    CareerSparkline {
-        height: 1;
-        width: 100%;
-    }
-    """
+    """Compact braille-character sparkline for career stat trends."""
 
     def __init__(
         self,
@@ -67,11 +54,10 @@ class CareerSparkline(Widget):
         self._values = values or []
         self._color = color
 
-    def compose(self) -> ComposeResult:
+    def render(self) -> str:
         spark = sparkline(self._values)
-        yield Label(f"{self._label}: [{self._color}]{spark}[/]")
+        return f"{self._label}: [{self._color}]{spark}[/]"
 
     def update_values(self, values: List[float]) -> None:
         """Update the sparkline data."""
         self._values = values
-        self.refresh(recompose=True)
