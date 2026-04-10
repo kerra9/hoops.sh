@@ -22,6 +22,14 @@ class PlayType(enum.Enum):
     OFF_SCREEN = "off_screen"
     HANDOFF = "handoff"
     CUT = "cut"
+    # New play types from the micro-action overhaul
+    HORNS = "horns"
+    FLOPPY = "floppy"
+    SPAIN_PNR = "spain_pnr"
+    DHO = "dho"
+    UCLA_CUT = "ucla_cut"
+    DELAY = "delay"
+    ATO = "ato"
 
 
 class PlayerRole(enum.Enum):
@@ -263,6 +271,218 @@ HANDOFF = PlayDefinition(
     clutch_fit=0.5,
 )
 
+# -- New plays from the micro-action overhaul ---------------------------------
+
+HORNS = PlayDefinition(
+    name="Horns",
+    play_type=PlayType.HORNS,
+    description="Two bigs at the elbows. PG picks a side for PnR with either big, "
+    "while the other pops or dives. Creates multiple options off one formation.",
+    roles=[
+        PlayerRole.BALL_HANDLER,
+        PlayerRole.SCREENER,
+        PlayerRole.SCREENER,
+        PlayerRole.SHOOTER,
+        PlayerRole.SHOOTER,
+    ],
+    actions=[
+        PlayAction("dribble", PlayerRole.BALL_HANDLER, None,
+                   "PG surveys at top of key"),
+        PlayAction("screen", PlayerRole.SCREENER, PlayerRole.BALL_HANDLER,
+                   "Elbow big sets ball screen"),
+        PlayAction("dribble", PlayerRole.BALL_HANDLER, None,
+                   "PG uses screen, reads defense"),
+        PlayAction("cut", PlayerRole.SCREENER, None,
+                   "Screening big rolls to basket"),
+        PlayAction("relocate", PlayerRole.SCREENER, None,
+                   "Opposite big pops to three-point line"),
+    ],
+    shot_quality_bonus=0.09,
+    drive_quality_bonus=0.10,
+    pass_quality_bonus=0.08,
+    halfcourt_fit=0.9,
+    clutch_fit=0.7,
+    comeback_fit=0.6,
+)
+
+FLOPPY = PlayDefinition(
+    name="Floppy",
+    play_type=PlayType.FLOPPY,
+    description="Shooter starts at the free-throw line and chooses to come off "
+    "stagger screens on either side. Creates a catch-and-shoot opportunity.",
+    roles=[
+        PlayerRole.BALL_HANDLER,
+        PlayerRole.SHOOTER,
+        PlayerRole.SCREENER,
+        PlayerRole.SCREENER,
+        PlayerRole.SPACER,
+    ],
+    actions=[
+        PlayAction("screen", PlayerRole.SCREENER, PlayerRole.SHOOTER,
+                   "First down screen for the shooter"),
+        PlayAction("screen", PlayerRole.SCREENER, PlayerRole.SHOOTER,
+                   "Second screen in stagger"),
+        PlayAction("relocate", PlayerRole.SHOOTER, None,
+                   "Shooter curls off screens to the wing"),
+        PlayAction("pass", PlayerRole.BALL_HANDLER, PlayerRole.SHOOTER,
+                   "Hit the shooter coming off the stagger"),
+        PlayAction("shoot", PlayerRole.SHOOTER, None,
+                   "Catch and shoot three"),
+    ],
+    shot_quality_bonus=0.12,
+    pass_quality_bonus=0.10,
+    halfcourt_fit=0.85,
+    clutch_fit=0.65,
+)
+
+SPAIN_PNR = PlayDefinition(
+    name="Spain Pick and Roll",
+    play_type=PlayType.SPAIN_PNR,
+    description="Standard PnR with a wrinkle: a third player sets a back screen "
+    "on the screener's defender, freeing the roller. Devastating when executed well.",
+    roles=[
+        PlayerRole.BALL_HANDLER,
+        PlayerRole.SCREENER,
+        PlayerRole.CUTTER,
+        PlayerRole.SHOOTER,
+        PlayerRole.SPACER,
+    ],
+    actions=[
+        PlayAction("screen", PlayerRole.SCREENER, PlayerRole.BALL_HANDLER,
+                   "Big sets ball screen"),
+        PlayAction("screen", PlayerRole.CUTTER, PlayerRole.SCREENER,
+                   "Third player back-screens the big's defender"),
+        PlayAction("dribble", PlayerRole.BALL_HANDLER, None,
+                   "Handler uses the screen, reads the defense"),
+        PlayAction("cut", PlayerRole.SCREENER, None,
+                   "Big rolls free after the back screen"),
+        PlayAction("pass", PlayerRole.BALL_HANDLER, PlayerRole.SCREENER,
+                   "Lob or bounce to the wide-open roller"),
+    ],
+    shot_quality_bonus=0.10,
+    drive_quality_bonus=0.12,
+    pass_quality_bonus=0.10,
+    halfcourt_fit=0.85,
+    clutch_fit=0.6,
+)
+
+DHO = PlayDefinition(
+    name="Dribble Handoff",
+    play_type=PlayType.DHO,
+    description="Big receives the ball at the elbow and hands off to a guard "
+    "curling around. The handoff acts as a screen, creating a pull-up or drive.",
+    roles=[
+        PlayerRole.BALL_HANDLER,
+        PlayerRole.POST_PLAYER,
+        PlayerRole.SHOOTER,
+        PlayerRole.SPACER,
+        PlayerRole.SPACER,
+    ],
+    actions=[
+        PlayAction("pass", PlayerRole.BALL_HANDLER, PlayerRole.POST_PLAYER,
+                   "Entry pass to the big at the elbow"),
+        PlayAction("screen", PlayerRole.POST_PLAYER, PlayerRole.BALL_HANDLER,
+                   "Big hands off with a screening action"),
+        PlayAction("dribble", PlayerRole.BALL_HANDLER, None,
+                   "Guard comes off the handoff"),
+        PlayAction("shoot", PlayerRole.BALL_HANDLER, None,
+                   "Pull-up jumper or drive to the rim"),
+    ],
+    shot_quality_bonus=0.08,
+    drive_quality_bonus=0.09,
+    halfcourt_fit=0.8,
+    clutch_fit=0.55,
+)
+
+UCLA_CUT = PlayDefinition(
+    name="UCLA Cut",
+    play_type=PlayType.UCLA_CUT,
+    description="Guard passes to the wing and cuts off a screen to the basket. "
+    "Creates a layup opportunity or opens up the wing for a three.",
+    roles=[
+        PlayerRole.CUTTER,
+        PlayerRole.SCREENER,
+        PlayerRole.SHOOTER,
+        PlayerRole.SPACER,
+        PlayerRole.SPACER,
+    ],
+    actions=[
+        PlayAction("pass", PlayerRole.CUTTER, PlayerRole.SHOOTER,
+                   "Guard passes to the wing"),
+        PlayAction("screen", PlayerRole.SCREENER, PlayerRole.CUTTER,
+                   "High post big sets screen for cutter"),
+        PlayAction("cut", PlayerRole.CUTTER, None,
+                   "Guard cuts off the screen to the basket"),
+        PlayAction("pass", PlayerRole.SHOOTER, PlayerRole.CUTTER,
+                   "Hit the cutter for the layup"),
+    ],
+    shot_quality_bonus=0.10,
+    drive_quality_bonus=0.08,
+    pass_quality_bonus=0.06,
+    halfcourt_fit=0.85,
+    clutch_fit=0.5,
+)
+
+DELAY = PlayDefinition(
+    name="Delay",
+    play_type=PlayType.DELAY,
+    description="Hold the ball and let the shot clock wind down, then attack "
+    "with a designed action. Used when protecting a lead late in games.",
+    roles=[
+        PlayerRole.BALL_HANDLER,
+        PlayerRole.SPACER,
+        PlayerRole.SPACER,
+        PlayerRole.SPACER,
+        PlayerRole.SPACER,
+    ],
+    actions=[
+        PlayAction("dribble", PlayerRole.BALL_HANDLER, None,
+                   "Ball handler dribbles at top of key, killing clock"),
+        PlayAction("dribble", PlayerRole.BALL_HANDLER, None,
+                   "Continue probing, looking for an opening"),
+        PlayAction("shoot", PlayerRole.BALL_HANDLER, None,
+                   "Attack with under 7 seconds on the shot clock"),
+    ],
+    shot_quality_bonus=0.03,
+    drive_quality_bonus=0.05,
+    halfcourt_fit=0.5,
+    clutch_fit=0.8,
+    comeback_fit=0.1,
+)
+
+ATO = PlayDefinition(
+    name="After Timeout",
+    play_type=PlayType.ATO,
+    description="Designed play drawn up during a timeout. Typically features "
+    "misdirection and a specific scoring action for the best player.",
+    roles=[
+        PlayerRole.BALL_HANDLER,
+        PlayerRole.SCREENER,
+        PlayerRole.CUTTER,
+        PlayerRole.SHOOTER,
+        PlayerRole.SPACER,
+    ],
+    actions=[
+        PlayAction("screen", PlayerRole.SCREENER, PlayerRole.SHOOTER,
+                   "Off-ball screen to create misdirection"),
+        PlayAction("cut", PlayerRole.CUTTER, None,
+                   "Cutter goes backdoor as a decoy"),
+        PlayAction("screen", PlayerRole.SCREENER, PlayerRole.BALL_HANDLER,
+                   "Second screen for the primary option"),
+        PlayAction("dribble", PlayerRole.BALL_HANDLER, None,
+                   "Ball handler uses screen for the designed shot"),
+        PlayAction("shoot", PlayerRole.BALL_HANDLER, None,
+                   "Take the designed shot"),
+    ],
+    shot_quality_bonus=0.12,
+    drive_quality_bonus=0.08,
+    pass_quality_bonus=0.06,
+    halfcourt_fit=0.9,
+    clutch_fit=0.95,
+    comeback_fit=0.7,
+)
+
+
 # All plays available in the default playbook
 DEFAULT_PLAYBOOK: list[PlayDefinition] = [
     PICK_AND_ROLL,
@@ -272,6 +492,13 @@ DEFAULT_PLAYBOOK: list[PlayDefinition] = [
     FAST_BREAK,
     OFF_SCREEN_ACTION,
     HANDOFF,
+    HORNS,
+    FLOPPY,
+    SPAIN_PNR,
+    DHO,
+    UCLA_CUT,
+    DELAY,
+    ATO,
 ]
 
 

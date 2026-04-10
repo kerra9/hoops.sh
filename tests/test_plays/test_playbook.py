@@ -35,17 +35,18 @@ class TestSelectPlay:
                 counts["other"] += 1
         assert counts["Fast Break"] > 20  # Should be selected frequently
 
-    def test_clutch_prefers_isolation(self):
-        counts = {"Isolation": 0, "other": 0}
+    def test_clutch_prefers_high_clutch_fit(self):
+        counts = {"high_clutch": 0, "other": 0}
         for i in range(100):
             play = select_play(
                 DEFAULT_PLAYBOOK, is_clutch=True, rng_value=i / 100,
             )
-            if play.play_type == PlayType.ISOLATION:
-                counts["Isolation"] += 1
+            # Isolation (0.9) and ATO (0.95) are high-clutch plays
+            if play.clutch_fit >= 0.8:
+                counts["high_clutch"] += 1
             else:
                 counts["other"] += 1
-        assert counts["Isolation"] > 10
+        assert counts["high_clutch"] > 15
 
     def test_empty_playbook_returns_default(self):
         play = select_play([], rng_value=0.5)
