@@ -72,8 +72,8 @@ def evaluate_situation(
             target_shot_clock=max(1.0, game_clock - 2.0),
         )
 
-    # 2-for-1: push for quick shot when 30-38 seconds left
-    if 30.0 <= game_clock <= 38.0:
+    # 2-for-1: push for quick shot when 30-38 seconds left (end of half, Q4, or OT only)
+    if 30.0 <= game_clock <= 38.0 and (quarter in (2, 4) or quarter > 4):
         return SituationType.TWO_FOR_ONE, SituationalModifiers(
             pace_mod=1.3,
             target_shot_clock=6.0,

@@ -389,6 +389,7 @@ class GameSimulator:
             # Advance game clock
             self._advance_clock(TICK_DURATION)
             if self._check_quarter_end():
+                self._flush_broadcast_lines()
                 return
 
             # Check shot clock
@@ -1777,7 +1778,7 @@ class GameSimulator:
         result = resolve_pass(
             pass_accuracy=player.attributes.playmaking.pass_accuracy,
             pass_vision=player.attributes.playmaking.pass_vision,
-            receiver_hands=target.player.attributes.rebounding.box_out,  # Using as proxy
+            receiver_hands=target.player.attributes.playmaking.ball_handle,  # Proxy for catching
             pass_type=pass_type,
             distance=dist,
             lane_quality=lane.quality,

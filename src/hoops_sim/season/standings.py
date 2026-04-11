@@ -73,6 +73,7 @@ class TeamRecord:
         if is_division:
             self.division_wins += 1
         self.streak = self.streak + 1 if self.streak > 0 else 1
+        self._update_last_10()
 
     def record_loss(
         self, is_home: bool, is_conference: bool, is_division: bool,
@@ -90,6 +91,29 @@ class TeamRecord:
         if is_division:
             self.division_losses += 1
         self.streak = self.streak - 1 if self.streak < 0 else -1
+        self._update_last_10()
+
+    def _update_last_10(self) -> None:
+        """Recalculate last-10 record from total wins/losses.
+
+        Approximation: uses the last 10 games' win rate based on overall record
+        when game-by-game history isn't available.
+        """
+        gp = self.games_played
+        if gp <= 10:
+            self.last_10_wins = self.wins
+            self.last_10_losses = self.losses
+        else:
+            # Approximate from overall record (proper tracking would need game history)
+            recent_w = max(0, self.wins - max(0, self.wins - 10))
+            recent_l = max(0, self.losses - max(0, self.losses - 10))
+            total = recent_w + recent_l
+            if total > 10:
+                ratio = 10 / total
+                recent_w = round(recent_w * ratio)
+                recent_l = 10 - recent_w
+            self.last_10_wins = recent_w
+            self.last_10_losses = recent_l
 
     @property
     def record_display(self) -> str:
