@@ -21,14 +21,18 @@ class ConfidenceTracker:
         """Get a player's confidence. Default is 0.0 (neutral)."""
         return self.player_confidence.get(player_id, 0.0)
 
-    def on_made_shot(self, player_id: int, was_three: bool = False) -> None:
+    def on_made_shot(self, player_id: int, was_three: bool = False,
+                     volatility: float = 1.0) -> None:
+        """Record a made shot. volatility scales the confidence swing (Phase 2: Personality)."""
         current = self.get(player_id)
-        boost = 0.08 if was_three else 0.05
+        boost = (0.08 if was_three else 0.05) * volatility
         self.player_confidence[player_id] = clamp(current + boost, -0.3, 0.3)
 
-    def on_missed_shot(self, player_id: int) -> None:
+    def on_missed_shot(self, player_id: int, volatility: float = 1.0) -> None:
+        """Record a missed shot. volatility scales the confidence swing (Phase 2: Personality)."""
         current = self.get(player_id)
-        self.player_confidence[player_id] = clamp(current - 0.03, -0.3, 0.3)
+        penalty = 0.03 * volatility
+        self.player_confidence[player_id] = clamp(current - penalty, -0.3, 0.3)
 
     def on_assist(self, player_id: int) -> None:
         current = self.get(player_id)

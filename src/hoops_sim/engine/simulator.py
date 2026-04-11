@@ -124,6 +124,9 @@ from hoops_sim.utils.constants import (
 from hoops_sim.utils.math import attribute_to_range, clamp
 from hoops_sim.utils.rng import RNGManager
 
+# Phase 1-5: Previously-dead subsystem imports
+from hoops_sim.physics.court_surface import CourtSurface, DEFAULT_SURFACE
+
 # Maximum ticks per possession to prevent infinite loops
 MAX_TICKS_PER_POSSESSION = 300  # 30 seconds
 
@@ -197,6 +200,35 @@ class GameSimulator:
         # Subsystems
         self.momentum = MomentumTracker()
         self.confidence = ConfidenceTracker()
+
+        # Phase 1: Arena / CourtSurface -- traction, altitude, slip risk
+        self.surface: CourtSurface = getattr(
+            getattr(home_team, "arena", None), "surface", None,
+        ) or DEFAULT_SURFACE
+        self._home_court_advantage: float = getattr(
+            getattr(home_team, "arena", None), "home_court_advantage", lambda: 0.0,
+        )()
+        self._altitude_stamina_mod: float = self.surface.get_stamina_drain_modifier()
+
+        # Phase 5: CoachingStaff modifiers (read once, apply throughout)
+        home_staff = getattr(home_team, "coaching_staff", None)
+        away_staff = getattr(away_team, "coaching_staff", None)
+        self._home_conditioning_mod = 1.0 - (
+            (getattr(home_staff, "conditioning_coach", 50) - 50) / 1000.0
+        ) if home_staff else 1.0
+        self._away_conditioning_mod = 1.0 - (
+            (getattr(away_staff, "conditioning_coach", 50) - 50) / 1000.0
+        ) if away_staff else 1.0
+        self._home_coach_personality = getattr(
+            home_staff, "head_coach_personality", None,
+        )
+        self._away_coach_personality = getattr(
+            away_staff, "head_coach_personality", None,
+        )
+        self._home_game_management = getattr(home_staff, "game_management", 50) if home_staff else 50
+        self._away_game_management = getattr(away_staff, "game_management", 50) if away_staff else 50
+        self._home_def_scheme = getattr(home_staff, "defensive_scheme", 50) if home_staff else 50
+        self._away_def_scheme = getattr(away_staff, "defensive_scheme", 50) if away_staff else 50
 
         # Broadcast-quality narration system (sole narration path)
         self.broadcast_stats: LiveStatTracker | None = None
@@ -475,8 +507,14 @@ class GameSimulator:
         )
 
         # Early possession: bias toward passing to move the ball
+        # Phase 2: High-ego players resist the pass bias -- they want their shots
+        pass_bias_chance = 0.50
+        personality = getattr(player, "personality", None)
+        if personality is not None and personality.ego > 0.7:
+            pass_bias_chance *= 0.3  # Alpha players rarely defer early
+
         if ticks_elapsed < 30 and action.action == "shoot" and shot_clock_pct > 0.5:
-            if pass_qualities and self._rng.random() < 0.50:
+            if pass_qualities and self._rng.random() < pass_bias_chance:
                 best_pass = max(pass_qualities, key=lambda pq: pq[1])
                 action = ActionOption("pass", 0.5, target_id=best_pass[0])
 
@@ -786,9 +824,30 @@ class GameSimulator:
             pcs.fsm.is_offense = False
 
     def _select_play(self, home_on_offense: bool, situation_type: object) -> PlayDefinition:
-        """Coach selects a play based on situation and personnel."""
+        """Coach selects a play based on situation, personnel, and coaching personality.
+
+        Integrates Phase 5: CoachingStaff personality influences play selection.
+        """
         plays = [PICK_AND_ROLL, ISOLATION, MOTION_OFFENSE, POST_UP, FAST_BREAK]
         weights = [0.30, 0.15, 0.25, 0.15, 0.15]
+
+        # Phase 5: Coaching personality biases play selection
+        from hoops_sim.models.coaching_staff import CoachPersonality
+        coach_pers = (self._home_coach_personality if home_on_offense
+                      else self._away_coach_personality)
+        if coach_pers is not None:
+            if coach_pers == CoachPersonality.AGGRESSIVE:
+                weights[4] *= 1.8  # More fast breaks
+                weights[0] *= 1.3  # More PnR (aggressive actions)
+            elif coach_pers == CoachPersonality.DEFENSIVE:
+                weights[2] *= 1.5  # More motion offense (patient)
+                weights[1] *= 0.7  # Fewer ISOs
+            elif coach_pers == CoachPersonality.OFFENSIVE:
+                weights[0] *= 1.5  # More PnR
+                weights[1] *= 1.3  # More ISO
+            elif coach_pers == CoachPersonality.OLD_SCHOOL:
+                weights[3] *= 2.0  # Much more post-up
+                weights[4] *= 0.7  # Fewer fast breaks
 
         # Adjust weights based on personnel
         offense = self.court.offensive_players(home_on_offense)
@@ -1240,7 +1299,16 @@ class GameSimulator:
             )
 
         # Apply separation from screen
-        handler.fsm.defender_separation += screen_result.separation_created
+        separation = screen_result.separation_created
+
+        # Phase 4: Relationship trust bonus on screen quality
+        team = self.home_team if home_on_offense else self.away_team
+        rel_matrix = getattr(team, "relationships", None)
+        if rel_matrix is not None:
+            rel = rel_matrix.get(handler.player_id, self._pending_screener_id)
+            separation += rel.on_court_screen_mod() * 10.0  # Scale to feet
+
+        handler.fsm.defender_separation += separation
 
         # Emit screen event
         self._broadcast_event(ScreenEvent(
@@ -1267,7 +1335,14 @@ class GameSimulator:
         """Execute a dribble move using the full dribble system.
 
         Hard cap: 3 moves per chain (4 for ball_handle > 90).
+        Integrates Phase 1 slip risk from CourtSurface.
         """
+        # Phase 1: Slip check -- high-intensity dribble moves risk slipping on bad surfaces
+        slip_prob = self.surface.get_slip_probability()
+        if self._phys_rng.random() < slip_prob:
+            self._turnover(handler, home_on_offense)
+            return
+
         # Dribble move cap: skip if at maximum
         if not handler.fsm.can_dribble:
             return
@@ -1430,6 +1505,10 @@ class GameSimulator:
         effective_def_dist = def_dist + handler.fsm.defender_separation * 0.3
         contest_quality = clamp(1.0 - effective_def_dist / 6.0, 0.0, 1.0)
 
+        # Phase 5: Defensive scheme quality boosts contest effectiveness
+        def_scheme = self._away_def_scheme if is_home else self._home_def_scheme
+        contest_quality *= 1.0 + (def_scheme - 50) / 500.0  # +/- up to ~10%
+
         rim_protector = any(
             d.position.distance_to(basket) < 8.0
             and d.player.attributes.defense.block > 70
@@ -1466,6 +1545,16 @@ class GameSimulator:
             make_prob *= self.momentum.home_modifier()
         else:
             make_prob *= self.momentum.away_modifier()
+
+        # Phase 1: Home court advantage -- slight boost to home team shooting
+        if is_home:
+            make_prob += self._home_court_advantage
+
+        # Phase 3: Lifestyle game-day focus modifier
+        lifestyle = getattr(player, "lifestyle", None)
+        if lifestyle is not None:
+            make_prob *= lifestyle.game_day_focus()
+
         make_prob = clamp(make_prob, 0.02, 0.98)
 
         # Update FSM to shooting state
@@ -1631,6 +1720,12 @@ class GameSimulator:
         # Consume drive time
         self._advance_clock(self._rng.uniform(1.5, 3.0))
 
+        # Phase 1: Slip check during high-intensity drive
+        slip_prob = self.surface.get_slip_probability()
+        if self._phys_rng.random() < slip_prob * 1.5:  # Drives are higher intensity
+            self._turnover(handler, is_home)
+            return True
+
         # Turnover chance
         to_chance = 0.07 + (1.0 - player.attributes.playmaking.ball_handle / 99.0) * 0.07
         if self._phys_rng.random() < to_chance:
@@ -1791,13 +1886,23 @@ class GameSimulator:
 
         # Use the full pass resolution system
         def_dist = self.court.defender_distance(handler.player_id, home_on_offense)
+
+        # Phase 4: Relationship trust modifier on lane quality
+        effective_lane_quality = lane.quality
+        team = self.home_team if home_on_offense else self.away_team
+        rel_matrix = getattr(team, "relationships", None)
+        if rel_matrix is not None:
+            rel = rel_matrix.get(handler.player_id, target_id)
+            effective_lane_quality += rel.on_court_passing_mod()
+            effective_lane_quality = clamp(effective_lane_quality, 0.0, 1.0)
+
         result = resolve_pass(
             pass_accuracy=player.attributes.playmaking.pass_accuracy,
             pass_vision=player.attributes.playmaking.pass_vision,
             receiver_hands=target.player.attributes.playmaking.ball_handle,  # Proxy for catching
             pass_type=pass_type,
             distance=dist,
-            lane_quality=lane.quality,
+            lane_quality=effective_lane_quality,
             is_under_pressure=def_dist < 3.0,
             has_needle_threader=player.badges.has_badge("needle_threader"),
             has_bail_out=player.badges.has_badge("bail_out"),
@@ -2140,6 +2245,19 @@ class GameSimulator:
                 is_foul_trouble=closest.fouls >= 4,
                 **self._make_base_fields(),
             ))
+
+        # Phase 2: Tech foul check -- fouled player may complain to refs
+        personality = getattr(handler.player, "personality", None)
+        if personality is not None:
+            tech_chance = personality.tech_foul_tendency()
+            if self._rng.random() < tech_chance:
+                # Technical foul on the fouled player for arguing
+                handler_is_home = is_home
+                if handler_is_home:
+                    gs.home_team_fouls += 1
+                else:
+                    gs.away_team_fouls += 1
+
         self._free_throws(handler, 2, is_home)
 
     def _shot_clock_violation(self, home_on_offense: bool) -> None:
@@ -2187,11 +2305,37 @@ class GameSimulator:
     # -- Energy ---------------------------------------------------------------
 
     def _drain_energy_for_ticks(self, num_ticks: int) -> None:
-        """Drain energy for on-court players for a given number of ticks."""
+        """Drain energy for on-court players for a given number of ticks.
+
+        Integrates:
+        - Phase 1: Altitude stamina drain modifier from CourtSurface
+        - Phase 3: Lifestyle recovery modifier from PlayerLifestyle
+        - Phase 5: Conditioning coach modifier from CoachingStaff
+        """
         for pcs in self.court.all_on_court():
-            pcs.energy.drain(ENERGY_DRAIN_JOG * num_ticks)
+            is_home = self._is_home_player(pcs)
+            base_drain = ENERGY_DRAIN_JOG * num_ticks
+
+            # Phase 1: Visiting team drains faster at altitude
+            if not is_home:
+                base_drain *= self._altitude_stamina_mod
+
+            # Phase 5: Conditioning coach reduces drain for their team
+            cond_mod = self._home_conditioning_mod if is_home else self._away_conditioning_mod
+            base_drain *= cond_mod
+
+            pcs.energy.drain(base_drain)
+
         for pcs in self.court.home_bench + self.court.away_bench:
-            pcs.energy.recover(ENERGY_RECOVERY_BENCH * num_ticks)
+            base_recovery = ENERGY_RECOVERY_BENCH * num_ticks
+
+            # Phase 3: Lifestyle affects bench recovery rate
+            lifestyle = getattr(pcs.player, "lifestyle", None)
+            if lifestyle is not None:
+                base_recovery *= lifestyle.daily_recovery_modifier()
+
+            pcs.energy.recover(base_recovery)
+
         # Track minutes
         seconds = num_ticks * TICK_DURATION
         for pcs in self.court.all_on_court():
@@ -2221,10 +2365,18 @@ class GameSimulator:
                     break
 
         # Timeout check
+        # Phase 5: Better game management = more responsive timeout calling
         is_def_home = not home_on_offense
         timeouts = gs.home_timeouts if is_def_home else gs.away_timeouts
+        game_mgmt = self._home_game_management if is_def_home else self._away_game_management
+        # Good coaches (game_management > 70) see shorter runs as problems
+        effective_run = self._opponent_run
+        if game_mgmt > 70:
+            effective_run = int(self._opponent_run * 1.3)  # Reacts sooner
+        elif game_mgmt < 30:
+            effective_run = int(self._opponent_run * 0.7)  # Slow to react
         if should_call_timeout(
-            opponent_run=self._opponent_run,
+            opponent_run=effective_run,
             own_turnovers_last_3=sum(1 for x in self._own_turnovers_recent[-3:] if x),
             timeouts_remaining=timeouts,
             is_clutch=gs.clock.is_clutch_time(),
