@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from hoops_sim.engine.action_fsm import BallHandlerState, DefenderState
+from hoops_sim.engine.action_fsm import BallHandlerState, DefenderState, OffBallOffenseState
 from hoops_sim.physics.contact import ContactEvent, ContactSeverity
 from hoops_sim.physics.vec import Vec2
 from hoops_sim.utils.rng import SeededRNG
@@ -117,8 +117,8 @@ def _evaluate_contact(
         severity = _roll_severity(0.3, 0.4, 0.2, 0.08, rng)
 
     # Screen contact
-    elif off_state in (None,) and distance < 1.5:
-        # Could be a screen -- low severity usually
+    elif off_state == OffBallOffenseState.SETTING_SCREEN and distance < 1.5:
+        # Screen contact -- low severity usually
         severity = _roll_severity(0.5, 0.3, 0.15, 0.04, rng)
         is_screen = True
 
