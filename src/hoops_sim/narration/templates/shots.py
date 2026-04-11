@@ -14,6 +14,12 @@ THREE_POINTER_MADE = [
     "{shooter} from three... SPLASH!",
     "{shooter} knocks down the triple!",
     "{shooter} buries the three!",
+    "{shooter} rises and fires... three-ball... BANG!",
+    "{shooter} sizes it up from deep... DRAINS IT!",
+    "{shooter} launches from three... count it!",
+    "{shooter} with the step-back three... MONEY!",
+    "{shooter} pulls the trigger from deep... it's good!",
+    "{shooter} from way downtown... CASH!",
 ]
 
 CORNER_THREE_MADE = [
@@ -31,13 +37,30 @@ MID_RANGE_MADE = [
     "{shooter} with the mid-range game... bucket!",
     "{shooter} rises and fires from {distance} feet... good!",
     "{shooter} with the pull-up jumper... money!",
+    "{shooter} from the free throw line area... count it!",
+    "{shooter} with the turnaround from {zone}... good!",
+    "{shooter} fades away from {distance} feet... it's in!",
+    "{shooter} shakes and bakes from the mid-range... bucket!",
+    "{shooter} hits the mid-range jumper. Old school.",
+    "{shooter} with the floater from {distance} feet... kisses it in!",
+    "{shooter} stops on a dime... the mid-range is pure!",
+    "{shooter} from {distance} feet... that's his sweet spot!",
+    "{shooter} knocks down the jumper from the elbow!",
 ]
 
 CLOSE_RANGE_MADE = [
     "{shooter} finishes at the rim!",
     "{shooter} puts it in from close range!",
     "{shooter} with the easy bucket inside!",
-    "{shooter} scores from {distance} feet out.",
+    "{shooter} scores from {distance}.",
+    "{shooter} lays it in!",
+    "{shooter} with the soft touch around the rim!",
+    "{shooter} muscles it in close!",
+    "{shooter} with the finger roll... good!",
+    "{shooter} kisses it off the glass... it's in!",
+    "{shooter} scoops it up and in!",
+    "{shooter} converts {distance}!",
+    "{shooter} with the teardrop floater... got it!",
 ]
 
 # Missed shot templates
