@@ -37,6 +37,12 @@ class NarrationEventType(enum.Enum):
     STEAL = "steal"
     OFF_BALL_ACTION = "off_ball_action"
     DEFENSIVE_ACTION = "defensive_action"
+    # New event types for richer micro-action narration
+    PROBING = "probing"
+    SHOT_CLOCK_PRESSURE = "shot_clock_pressure"
+    PLAY_CALL = "play_call"
+    MISMATCH = "mismatch"
+    CROWD_REACTION = "crowd_reaction"
 
 
 class ShotResultType(enum.Enum):
@@ -110,6 +116,10 @@ class BaseNarrationEvent:
     home_score: int = 0
     away_score: int = 0
     possession_id: int = 0
+    # Spatial context fields (Phase 4)
+    court_location: str = ""      # "left wing", "top of the key", etc.
+    drive_direction: str = ""     # "left", "right", "baseline", "middle"
+    distance_description: str = ""  # "from deep", "24 feet"
 
 
 @dataclass
@@ -387,6 +397,54 @@ class DefensiveEvent(BaseNarrationEvent):
     description: str = ""
 
 
+@dataclass
+class ProbingEvent(BaseNarrationEvent):
+    """Emitted when a ball handler is sizing up the defense."""
+
+    event_type: NarrationEventType = NarrationEventType.PROBING
+    player_name: str = ""
+    player_id: int = 0
+    defender_name: str = ""
+    ticks_held: int = 0
+
+
+@dataclass
+class ShotClockPressureEvent(BaseNarrationEvent):
+    """Emitted when the shot clock is low and creates urgency."""
+
+    event_type: NarrationEventType = NarrationEventType.SHOT_CLOCK_PRESSURE
+    team_name: str = ""
+    handler_name: str = ""
+
+
+@dataclass
+class PlayCallEvent(BaseNarrationEvent):
+    """Emitted when a play is called (screen, iso, etc.)."""
+
+    event_type: NarrationEventType = NarrationEventType.PLAY_CALL
+    caller_name: str = ""
+    play_name: str = ""
+
+
+@dataclass
+class MismatchEvent(BaseNarrationEvent):
+    """Emitted when a mismatch is detected after a switch."""
+
+    event_type: NarrationEventType = NarrationEventType.MISMATCH
+    offensive_player_name: str = ""
+    defensive_player_name: str = ""
+    mismatch_type: str = ""  # "size", "speed", "skill"
+
+
+@dataclass
+class CrowdReactionEvent(BaseNarrationEvent):
+    """Emitted for crowd atmosphere narration."""
+
+    event_type: NarrationEventType = NarrationEventType.CROWD_REACTION
+    reaction_type: str = ""  # "erupts", "silenced", "building"
+    is_home_positive: bool = True
+
+
 # Union type for all narration events
 from typing import Union
 
@@ -411,4 +469,9 @@ NarrationEventUnion = Union[
     MilestoneEvent,
     OffBallEvent,
     DefensiveEvent,
+    ProbingEvent,
+    ShotClockPressureEvent,
+    PlayCallEvent,
+    MismatchEvent,
+    CrowdReactionEvent,
 ]

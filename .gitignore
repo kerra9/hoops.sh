@@ -12,3 +12,4 @@ build/
 *.so
 .env
 .venv
+mise.toml
