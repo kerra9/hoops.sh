@@ -28,6 +28,8 @@ class Vec2:
         return self.__mul__(scalar)
 
     def __truediv__(self, scalar: float) -> Vec2:
+        if abs(scalar) < 1e-10:
+            return Vec2(0.0, 0.0)
         return Vec2(self.x / scalar, self.y / scalar)
 
     def __neg__(self) -> Vec2:
@@ -144,6 +146,8 @@ class Vec3:
         return self.__mul__(scalar)
 
     def __truediv__(self, scalar: float) -> Vec3:
+        if abs(scalar) < 1e-10:
+            return Vec3(0.0, 0.0, 0.0)
         return Vec3(self.x / scalar, self.y / scalar, self.z / scalar)
 
     def __neg__(self) -> Vec3:

@@ -36,7 +36,7 @@ class PlayerNarrationStats:
     consecutive_makes: int = 0
     consecutive_misses: int = 0
     minutes_played: float = 0.0
-    announced_milestones: set = field(default_factory=set)
+    announced_milestones: set[int] = field(default_factory=set)
 
     def on_made_shot(self, points: int, is_three: bool) -> None:
         self.points += points
@@ -224,6 +224,9 @@ class LiveStatTracker:
             team_stats.three_attempted += 1
 
         team_name = self.home_team_name if is_home else self.away_team_name
+        # Track opponent scoring against the current run before resetting it.
+        # If a different team than the run team scores, record it as opponent points.
+        self.scoring_run.on_opponent_score(team_name, points)
         self.scoring_run.on_score(team_name, points, game_clock)
 
         # Update scores

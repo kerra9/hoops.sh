@@ -28,10 +28,10 @@ class PlayerIdentity:
     """
 
     announcer_nickname: str = ""       # "The Beard", "Big Fundamental"
-    signature_moves: list = field(default_factory=list)  # ["step-back three", "euro step"]
+    signature_moves: list[str] = field(default_factory=list)  # ["step-back three", "euro step"]
     play_style: str = ""               # "crafty veteran", "explosive athlete"
     celebration_style: str = ""        # "stares down defender", "flexes"
-    known_for: list = field(default_factory=list)  # ["deep threes", "lockdown defense"]
+    known_for: list[str] = field(default_factory=list)  # ["deep threes", "lockdown defense"]
 
 
 class Position(enum.Enum):

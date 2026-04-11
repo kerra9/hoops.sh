@@ -52,7 +52,7 @@ class PossessionTracker:
     ticks_in_state: int = 0
     ticks_total: int = 0
     result: PossessionResult | None = None
-    events: list = field(default_factory=list)
+    events: list[object] = field(default_factory=list)
 
     def transition_to(self, new_state: PossessionState) -> None:
         """Transition to a new possession state."""
