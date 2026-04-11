@@ -61,6 +61,7 @@ from hoops_sim.engine.court_state import (
 )
 from hoops_sim.engine.game import GamePhase, GameState
 from hoops_sim.engine.possession import PossessionState
+from hoops_sim.engine.tick import TickEngine, TickEventType
 from hoops_sim.engine.situational import evaluate_situation
 from hoops_sim.engine.transition import evaluate_transition
 from hoops_sim.models.stats import TeamGameStats
@@ -331,6 +332,9 @@ class GameSimulator:
             broadcast_stats=self.broadcast_stats,
         )
 
+        # Phase 9: TickEngine -- single source of truth for clock management
+        self.tick_engine = TickEngine(self.game_state)
+
         # Internal state
         self._events: list[SimEvent] = []
         self._game_over = False
@@ -463,24 +467,31 @@ class GameSimulator:
         ))
 
         # Phase 3: Micro-action tick loop
+        # Phase 9: Now driven by TickEngine instead of inline clock management
         self._possession_events = []
         possession_resolved = False
         ticks_elapsed = 0
 
+        # Store offense direction for callbacks
+        self._current_home_on_offense = home_on_offense
+
         while not possession_resolved and ticks_elapsed < MAX_TICKS_PER_POSSESSION:
             ticks_elapsed += 1
 
-            # Advance game clock
-            self._advance_clock(TICK_DURATION)
-            if self._check_quarter_end():
-                self._flush_broadcast_lines()
-                return
+            # TickEngine handles clock advance, shot clock, quarter end
+            tick_result = self.tick_engine.process_tick()
 
-            # Check shot clock
-            if gs.clock.shot_clock <= 0.0:
-                self._shot_clock_violation(home_on_offense)
-                self._end_possession_and_flip()
-                return
+            # Check for terminating events from the tick engine
+            for tick_event in tick_result.events:
+                if tick_event.event_type == TickEventType.SHOT_CLOCK_VIOLATION:
+                    self._shot_clock_violation(home_on_offense)
+                    self._end_possession_and_flip()
+                    return
+                if tick_event.event_type == TickEventType.QUARTER_END:
+                    # Delegate to existing quarter-end handler
+                    if self._check_quarter_end():
+                        self._flush_broadcast_lines()
+                        return
 
             # Process all 10 player FSMs
             handler = self._get_ball_handler(home_on_offense)
@@ -1111,13 +1122,14 @@ class GameSimulator:
                 "intensity": line.intensity,
             })
 
-    def _advance_clock(self, seconds: float) -> None:
+    def _advance_clock(self, seconds: float) -> list:
         """Advance the game clock by the given seconds.
 
-        Delegates to GameClock.tick() so the is_running guard is respected.
+        Phase 9: Now delegates to TickEngine.advance() which decomposes
+        variable-dt into fixed sub-ticks, firing all registered callbacks.
+        Returns any TickEvents that occurred (shot clock violation, quarter end).
         """
-        gs = self.game_state
-        gs.clock.tick(seconds)
+        return self.tick_engine.advance(seconds)
 
     def _check_quarter_end(self) -> bool:
         """Check if the quarter has ended and handle it."""

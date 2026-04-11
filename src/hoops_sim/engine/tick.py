@@ -2,15 +2,20 @@
 
 The tick engine is the heart of the simulation. Every 0.1 seconds, it:
 1. Advances the game clock
-2. Updates all player positions (movement layer)
-3. Processes ball physics
+2. Updates all player positions (movement layer) via callbacks
+3. Processes ball physics via callbacks
 4. Checks for events (shot clock violation, quarter end)
 5. Returns any events that occurred during this tick
+
+Phase 9: Extended with callback hooks and variable-dt advance() so the
+simulator can delegate all clock/event management to this single engine.
 """
 
 from __future__ import annotations
 
 import enum
+import math
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from hoops_sim.engine.game import GameState
@@ -59,6 +64,8 @@ class TickEngine:
     """The master tick loop that drives the simulation.
 
     Processes one tick at a time, advancing the game state.
+    Supports callback hooks so subsystems (FSMs, energy, contact detection)
+    can be registered without the engine knowing about them directly.
     """
 
     def __init__(self, game_state: GameState) -> None:
@@ -66,22 +73,45 @@ class TickEngine:
         self.tick_number = 0
         self.dt = TICK_DURATION
 
-    def process_tick(self) -> TickResult:
+        # Callback hooks -- registered by the simulator or other systems
+        self._on_tick_callbacks: list[Callable[[float], None]] = []
+
+    def register_on_tick(self, callback: Callable[[float], None]) -> None:
+        """Register a callback that fires every tick.
+
+        The callback receives the dt (time step) as its argument.
+        Use this to hook in FSM updates, energy drain, contact detection, etc.
+        """
+        self._on_tick_callbacks.append(callback)
+
+    def clear_callbacks(self) -> None:
+        """Remove all registered callbacks."""
+        self._on_tick_callbacks.clear()
+
+    def process_tick(self, dt_override: float | None = None) -> TickResult:
         """Process a single simulation tick.
+
+        Args:
+            dt_override: Optional custom time step. Defaults to TICK_DURATION.
 
         Returns:
             TickResult with any events that occurred.
         """
+        dt = dt_override if dt_override is not None else self.dt
         self.tick_number += 1
         events: list[TickEvent] = []
         gs = self.game_state
 
         # Only advance clock when the ball is live
         if gs.possession.is_live():
-            gs.clock.tick(self.dt)
+            gs.clock.tick(dt)
 
         # Advance possession tick counter
         gs.possession.tick()
+
+        # Fire registered callbacks (FSMs, energy, contact detection)
+        for callback in self._on_tick_callbacks:
+            callback(dt)
 
         # Check shot clock violation
         if gs.clock.is_shot_clock_violation() and gs.possession.is_live():
@@ -105,10 +135,32 @@ class TickEngine:
 
         return TickResult(
             tick_number=self.tick_number,
-            dt=self.dt,
+            dt=dt,
             events=events,
             clock_running=gs.clock.is_running,
         )
+
+    def advance(self, seconds: float) -> list[TickEvent]:
+        """Advance by an arbitrary number of seconds.
+
+        Decomposes the time into fixed-dt sub-ticks so all registered
+        callbacks fire at the correct frequency. The last sub-tick may
+        be shorter than dt if seconds is not evenly divisible.
+
+        Args:
+            seconds: Total time to advance (e.g. 2.5 for a drive).
+
+        Returns:
+            All TickEvents that occurred during the advance.
+        """
+        all_events: list[TickEvent] = []
+        remaining = seconds
+        while remaining > 1e-9:
+            step = min(self.dt, remaining)
+            result = self.process_tick(dt_override=step)
+            all_events.extend(result.events)
+            remaining -= step
+        return all_events
 
     def run_ticks(self, count: int) -> list[TickResult]:
         """Run multiple ticks.
