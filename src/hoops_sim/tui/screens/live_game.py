@@ -46,6 +46,7 @@ class LiveGameScreen(Screen):
         Binding("s", "slow_down", "Slow", show=True),
         Binding("i", "instant_sim", "Instant", show=True),
         Binding("b", "toggle_box_score", "Box Score", show=True),
+        Binding("c", "copy_game_log", "Copy Log", show=True),
         Binding("q", "end_game", "End Game", show=True),
     ]
 
@@ -235,6 +236,18 @@ class LiveGameScreen(Screen):
                 away_name=self._away_team.full_name if self._away_team else "Away",
             )
         )
+
+    def action_copy_game_log(self) -> None:
+        """Copy the entire game log to clipboard (or game_log.txt as fallback)."""
+        try:
+            pbp = self.query_one(PlayByPlayWidget)
+            count = pbp.copy_to_clipboard()
+            if count > 0:
+                self.notify(f"Game log copied ({count} lines)")
+            else:
+                self.notify("No game log to copy yet")
+        except Exception:
+            self.notify("Could not copy game log")
 
     def action_end_game(self) -> None:
         """End the game and go to post-game summary."""
