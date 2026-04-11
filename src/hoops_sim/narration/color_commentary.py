@@ -66,7 +66,7 @@ class ColorCommentaryNarrator:
         self.arcs = arc_tracker
         self._cooldown = 0  # possessions since last commentary
         self._recent_templates: List[str] = []
-        self._max_recent = 8
+        self._max_recent = 15
 
     def _pick_template(self, templates: List[str]) -> str:
         """Select a template, avoiding recent repeats."""

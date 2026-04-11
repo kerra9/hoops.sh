@@ -104,7 +104,7 @@ class PlayByPlayNarrator:
         self.rng = rng
         self.stats = stat_tracker
         self._recent_templates: List[str] = []
-        self._max_recent = 10
+        self._max_recent = 20
 
     def narrate(self, event: BaseNarrationEvent) -> Optional[str]:
         """Produce play-by-play text for a narration event.
@@ -315,9 +315,10 @@ class PlayByPlayNarrator:
                 ))
             elif event.distance < 8.0:
                 tmpl = self._pick_template(CLOSE_RANGE_MADE)
+                dist_str = "at the rim" if event.distance < 4.0 else f"{event.distance:.0f} feet out"
                 parts.append(tmpl.format(
                     shooter=event.shooter_name,
-                    distance=f"{event.distance:.0f}",
+                    distance=dist_str,
                 ))
             else:
                 tmpl = self._pick_template(MID_RANGE_MADE)
@@ -332,21 +333,15 @@ class PlayByPlayNarrator:
                 suffix = self._pick_template(AND_ONE_SUFFIX)
                 parts.append(suffix)
 
-            # Score update
+            # Score update -- guard against lead=0 (tie game)
             score_diff = event.new_score_home - event.new_score_away
             if score_diff == 0:
                 tmpl = self._pick_template(TIE_SCORE_TEMPLATES)
                 parts.append(tmpl.format(
                     score=event.new_score_home,
                 ))
-            else:
-                leading = (
-                    event.team_name
-                    if (event.lead > 0)
-                    else ""
-                )
-                if leading:
-                    parts.append(f"{event.team_name} {event.new_score_home}-{event.new_score_away}.")
+            elif event.lead and event.lead != 0:
+                parts.append(f"{event.team_name} {event.new_score_home}-{event.new_score_away}.")
         else:
             # Missed shot
             if event.is_three:
@@ -390,6 +385,14 @@ class PlayByPlayNarrator:
             f"{event.player_name} loses the handle. Turnover.",
             f"Turnover by {event.player_name}. {event.team_name} ball.",
             f"{event.player_name} coughs it up. Turnover.",
+            f"{event.player_name} stepped out of bounds. Turnover.",
+            f"Ball poked away from {event.player_name}!",
+            f"{event.player_name} caught with his head down. Turnover.",
+            f"Stripped! {event.player_name} loses it.",
+            f"{event.player_name} lost his footing. Ball goes the other way.",
+            f"Errant pass by {event.player_name}. That's a turnover.",
+            f"Offensive foul called on {event.player_name}. Turnover.",
+            f"{event.player_name} bobbles it and loses possession.",
         ]
         return self._pick_template(templates)
 
