@@ -61,6 +61,7 @@ from hoops_sim.engine.court_state import (
 )
 from hoops_sim.engine.game import GamePhase, GameState
 from hoops_sim.engine.possession import PossessionState
+from hoops_sim.engine.tick import TickEngine, TickEventType
 from hoops_sim.engine.situational import evaluate_situation
 from hoops_sim.engine.transition import evaluate_transition
 from hoops_sim.models.stats import TeamGameStats
@@ -101,7 +102,7 @@ from hoops_sim.narration.possession_narrator import PossessionNarrator
 from hoops_sim.narration.segments import BroadcastSegments
 from hoops_sim.narration.stat_tracker import LiveStatTracker
 from hoops_sim.physics.kinematics import MovementType
-from hoops_sim.physics.vec import Vec2
+from hoops_sim.physics.vec import Vec2, Vec3
 from hoops_sim.plays.playbook import (
     FAST_BREAK,
     ISOLATION,
@@ -114,26 +115,70 @@ from hoops_sim.psychology.confidence import ConfidenceTracker
 from hoops_sim.psychology.momentum import MomentumTracker
 from hoops_sim.shot.probability import ShotContext, calculate_shot_probability
 from hoops_sim.utils.constants import (
+    BANK_SHOT_CLOSE_CHANCE,
+    BANK_SHOT_DISTANCE_THRESHOLD,
+    BANK_SHOT_FAR_CHANCE,
+    BLOCK_BASE_CHANCE,
+    BLOCK_RATING_THRESHOLD,
     COURT_LENGTH,
     COURT_WIDTH,
+    DRIBBLE_MOVE_BEFORE_DRIVE_CHANCE,
+    DRIBBLE_MOVE_BEFORE_SHOT_CHANCE,
+    DRIBBLE_MOVE_BEFORE_SHOT_DISTANCE,
+    DRIVE_KICKOUT_CHANCE,
+    DRIVE_KICKOUT_DISTANCE,
+    DRIVE_TURNOVER_BASE_CHANCE,
+    DRIVE_TURNOVER_SKILL_FACTOR,
+    EARLY_POSSESSION_PASS_BIAS_TICKS,
     ENERGY_DRAIN_JOG,
     ENERGY_DRAIN_SPRINT,
     ENERGY_RECOVERY_BENCH,
+    MAX_REBOUND_DISTANCE,
+    SCREENER_STRENGTH_THRESHOLD,
+    SCREENER_WEIGHT_THRESHOLD,
+    SHOOTER_THREE_POINT_THRESHOLD,
     TICK_DURATION,
 )
 from hoops_sim.utils.math import attribute_to_range, clamp
 from hoops_sim.utils.rng import RNGManager
 
+# Phase 1-5: Previously-dead subsystem imports
+from hoops_sim.physics.court_surface import CourtSurface, DEFAULT_SURFACE
+
+# Phase 6: Movement module imports (replacing inline movement logic)
+from hoops_sim.movement.off_ball import calculate_spot_up_position, calculate_cut_target, OffBallAction
+from hoops_sim.movement.defensive_movement import (
+    calculate_on_ball_position,
+    calculate_help_position,
+    calculate_closeout_position,
+)
+from hoops_sim.movement.locomotion import choose_movement_type
+
+# Phase 7: Contact detector import
+from hoops_sim.engine.contact_detector import detect_contacts
+
+# Phase 8: Backboard physics import
+from hoops_sim.physics.backboard import check_backboard_hit
+
 # Maximum ticks per possession to prevent infinite loops
 MAX_TICKS_PER_POSSESSION = 300  # 30 seconds
 
 
-class ShotOutcome(enum.Enum):
-    """Outcome of a shot attempt for possession tracking."""
+class PossessionOutcome(enum.Enum):
+    """Outcome of a shot attempt for possession tracking.
+
+    Renamed from ShotOutcome to avoid collision with physics.rim_interaction.ShotOutcome
+    which tracks the physical ball-rim interaction (swish, rattle, airball, etc.).
+    This enum tracks what happens to the POSSESSION after a shot.
+    """
 
     MADE = "made"           # Basket scored -- possession should flip (other team inbounds)
     OFFENSIVE_REBOUND = "oreb"   # Missed + OREB -- same team retains
     DEFENSIVE_REBOUND = "dreb"   # Missed + DREB (or block) -- possession should flip
+
+
+# Backward-compatible alias
+ShotOutcome = PossessionOutcome
 
 
 @dataclass
@@ -198,6 +243,35 @@ class GameSimulator:
         self.momentum = MomentumTracker()
         self.confidence = ConfidenceTracker()
 
+        # Phase 1: Arena / CourtSurface -- traction, altitude, slip risk
+        self.surface: CourtSurface = getattr(
+            getattr(home_team, "arena", None), "surface", None,
+        ) or DEFAULT_SURFACE
+        self._home_court_advantage: float = getattr(
+            getattr(home_team, "arena", None), "home_court_advantage", lambda: 0.0,
+        )()
+        self._altitude_stamina_mod: float = self.surface.get_stamina_drain_modifier()
+
+        # Phase 5: CoachingStaff modifiers (read once, apply throughout)
+        home_staff = getattr(home_team, "coaching_staff", None)
+        away_staff = getattr(away_team, "coaching_staff", None)
+        self._home_conditioning_mod = 1.0 - (
+            (getattr(home_staff, "conditioning_coach", 50) - 50) / 1000.0
+        ) if home_staff else 1.0
+        self._away_conditioning_mod = 1.0 - (
+            (getattr(away_staff, "conditioning_coach", 50) - 50) / 1000.0
+        ) if away_staff else 1.0
+        self._home_coach_personality = getattr(
+            home_staff, "head_coach_personality", None,
+        )
+        self._away_coach_personality = getattr(
+            away_staff, "head_coach_personality", None,
+        )
+        self._home_game_management = getattr(home_staff, "game_management", 50) if home_staff else 50
+        self._away_game_management = getattr(away_staff, "game_management", 50) if away_staff else 50
+        self._home_def_scheme = getattr(home_staff, "defensive_scheme", 50) if home_staff else 50
+        self._away_def_scheme = getattr(away_staff, "defensive_scheme", 50) if away_staff else 50
+
         # Broadcast-quality narration system (sole narration path)
         self.broadcast_stats: LiveStatTracker | None = None
         self.broadcast_mixer: BroadcastMixer | None = None
@@ -258,6 +332,9 @@ class GameSimulator:
             broadcast_stats=self.broadcast_stats,
         )
 
+        # Phase 9: TickEngine -- single source of truth for clock management
+        self.tick_engine = TickEngine(self.game_state)
+
         # Internal state
         self._events: list[SimEvent] = []
         self._game_over = False
@@ -268,6 +345,7 @@ class GameSimulator:
         self._last_passer_id: int | None = None
 
         # Micro-action tracking
+        self._last_tick_contacts: list = []  # Phase 7: contact detector results
         self._possession_events: list[PossessionEvent] = []
         self._current_play: PlayDefinition | None = None
         self._pending_screener_id: int | None = None
@@ -389,24 +467,31 @@ class GameSimulator:
         ))
 
         # Phase 3: Micro-action tick loop
+        # Phase 9: Now driven by TickEngine instead of inline clock management
         self._possession_events = []
         possession_resolved = False
         ticks_elapsed = 0
 
+        # Store offense direction for callbacks
+        self._current_home_on_offense = home_on_offense
+
         while not possession_resolved and ticks_elapsed < MAX_TICKS_PER_POSSESSION:
             ticks_elapsed += 1
 
-            # Advance game clock
-            self._advance_clock(TICK_DURATION)
-            if self._check_quarter_end():
-                self._flush_broadcast_lines()
-                return
+            # TickEngine handles clock advance, shot clock, quarter end
+            tick_result = self.tick_engine.process_tick()
 
-            # Check shot clock
-            if gs.clock.shot_clock <= 0.0:
-                self._shot_clock_violation(home_on_offense)
-                self._end_possession_and_flip()
-                return
+            # Check for terminating events from the tick engine
+            for tick_event in tick_result.events:
+                if tick_event.event_type == TickEventType.SHOT_CLOCK_VIOLATION:
+                    self._shot_clock_violation(home_on_offense)
+                    self._end_possession_and_flip()
+                    return
+                if tick_event.event_type == TickEventType.QUARTER_END:
+                    # Delegate to existing quarter-end handler
+                    if self._check_quarter_end():
+                        self._flush_broadcast_lines()
+                        return
 
             # Process all 10 player FSMs
             handler = self._get_ball_handler(home_on_offense)
@@ -475,8 +560,14 @@ class GameSimulator:
         )
 
         # Early possession: bias toward passing to move the ball
+        # Phase 2: High-ego players resist the pass bias -- they want their shots
+        pass_bias_chance = 0.50
+        personality = getattr(player, "personality", None)
+        if personality is not None and personality.ego > 0.7:
+            pass_bias_chance *= 0.3  # Alpha players rarely defer early
+
         if ticks_elapsed < 30 and action.action == "shoot" and shot_clock_pct > 0.5:
-            if pass_qualities and self._rng.random() < 0.50:
+            if pass_qualities and self._rng.random() < pass_bias_chance:
                 best_pass = max(pass_qualities, key=lambda pq: pq[1])
                 action = ActionOption("pass", 0.5, target_id=best_pass[0])
 
@@ -484,7 +575,7 @@ class GameSimulator:
         if action.action == "shoot":
             # Execute a dribble move before shooting if defender is close
             def_dist = self.court.defender_distance(player.id, home_on_offense)
-            if def_dist < 5.0 and self._rng.random() < 0.4:
+            if def_dist < DRIBBLE_MOVE_BEFORE_SHOT_DISTANCE and self._rng.random() < DRIBBLE_MOVE_BEFORE_SHOT_CHANCE:
                 self._execute_dribble_move(handler, home_on_offense)
             outcome = self._execute_shot(handler, home_on_offense, catch_and_shoot=False)
             if outcome == ShotOutcome.OFFENSIVE_REBOUND:
@@ -496,7 +587,7 @@ class GameSimulator:
 
         elif action.action == "drive":
             # Execute a dribble move to create space before driving
-            if self._rng.random() < 0.6:
+            if self._rng.random() < DRIBBLE_MOVE_BEFORE_DRIVE_CHANCE:
                 self._execute_dribble_move(handler, home_on_offense)
             resolved = self._execute_drive(handler, home_on_offense)
             if resolved:
@@ -548,7 +639,10 @@ class GameSimulator:
             return False
 
     def _tick_all_players(self, home_on_offense: bool) -> None:
-        """Advance all 10 player FSMs by one tick and update positions."""
+        """Advance all 10 player FSMs by one tick and update positions.
+
+        Phase 7: Now runs contact detection after position updates.
+        """
         for pcs in self.court.all_on_court():
             # Tick the FSM
             pcs.fsm.tick()
@@ -582,6 +676,26 @@ class GameSimulator:
         for pcs in defense:
             if pcs.fsm.is_complete:
                 self._decide_defensive_action(pcs, home_on_offense, basket)
+
+        # Phase 7: Contact detection after all positions updated
+        offense_states = [
+            (p.player_id, p.position, p.fsm)
+            for p in self.court.offensive_players(home_on_offense)
+        ]
+        defense_states = [
+            (p.player_id, p.position, p.fsm)
+            for p in self.court.defensive_players(home_on_offense)
+        ]
+        bh = self.court.ball_handler()
+        contacts = detect_contacts(
+            offense_states=offense_states,
+            defense_states=defense_states,
+            ball_handler_id=bh.player_id if bh else None,
+            basket_position=basket,
+            rng=self._phys_rng,
+        )
+        # Store contacts for foul processing by the caller
+        self._last_tick_contacts = contacts
 
     def _decide_off_ball_action(
         self, pcs: PlayerCourtState, home_on_offense: bool, basket: Vec2,
@@ -668,13 +782,36 @@ class GameSimulator:
     def _decide_defensive_action(
         self, pcs: PlayerCourtState, home_on_offense: bool, basket: Vec2,
     ) -> None:
-        """Decide what a defensive player does next."""
+        """Decide what a defensive player does next.
+
+        Uses defensive_iq and help_defense_iq to make smarter decisions.
+        """
+        player = pcs.player
+
         # Find their assignment
         assignment = None
         if pcs.defensive_assignment_id is not None:
             assignment = self.court.get_player_state(pcs.defensive_assignment_id)
 
         ball_handler = self.court.ball_handler()
+
+        # defense.help_defense_iq: smart help defenders check if ball handler
+        # is driving and proactively help
+        help_iq = player.attributes.defense.help_defense_iq
+        if (ball_handler and assignment and help_iq > 70
+                and ball_handler.fsm.current_state == BallHandlerState.DRIVING):
+            # High help IQ: rotate to help on the drive
+            help_pos = basket + (ball_handler.position - basket).normalized() * 5.0
+            pcs.fsm.transition_to(
+                DefenderState.HELPING,
+                ticks=self._rng.randint(3, 8),
+                target=help_pos,
+                intent=MovementIntent.SPRINT,
+            )
+            return
+
+        # defense.defensive_iq: smarter defenders position better
+        def_iq = player.attributes.defense.defensive_iq
 
         if assignment is None:
             # Guard the ball handler area
@@ -691,9 +828,19 @@ class GameSimulator:
             return
 
         # If assignment has the ball, guard on-ball
+        # Phase 6: Use movement.defensive_movement for positioning
         if ball_handler and assignment.player_id == ball_handler.player_id:
-            to_basket = (basket - assignment.position).normalized()
-            guard_pos = assignment.position + to_basket * 3.0
+            # defensive_iq: smarter defenders guard tighter
+            gap = 3.0
+            if def_iq > 70:
+                gap = 2.5
+            elif def_iq < 40:
+                gap = 4.0
+            guard_pos = calculate_on_ball_position(
+                offensive_player_pos=assignment.position,
+                basket_position=basket,
+                gap=gap,
+            )
             pcs.fsm.transition_to(
                 DefenderState.GUARDING_ON_BALL,
                 ticks=self._rng.randint(3, 10),
@@ -702,11 +849,14 @@ class GameSimulator:
             )
         else:
             # Off-ball: deny position between assignment and basket
-            to_basket = (basket - assignment.position).normalized()
-            deny_pos = assignment.position + to_basket * 3.0
+            deny_pos = calculate_on_ball_position(
+                offensive_player_pos=assignment.position,
+                basket_position=basket,
+                gap=3.0,
+            )
             if ball_handler:
                 to_ball = (ball_handler.position - assignment.position).normalized()
-                deny_pos = assignment.position + to_basket * 2.5 + to_ball * 1.0
+                deny_pos = deny_pos + to_ball * 1.0
             pcs.fsm.transition_to(
                 DefenderState.DENYING_PASS,
                 ticks=self._rng.randint(5, 20),
@@ -747,6 +897,25 @@ class GameSimulator:
                 intent=MovementIntent.JOG,
             )
 
+        # Badge: floor_general -- boosts teammates' offensive attributes (aura effect)
+        # Badge: defensive_leader -- boosts teammates' defensive attributes
+        for pcs in self.court.all_on_court():
+            player = pcs.player
+            if player.badges.has_badge("floor_general"):
+                # Floor general gives a small boost tracked via FSM context
+                pcs.fsm.context["floor_general_active"] = True
+            if player.badges.has_badge("defensive_leader"):
+                pcs.fsm.context["defensive_leader_active"] = True
+
+        # mental.motor -- effort consistency: low motor = occasional possessions of low effort
+        for pcs in self.court.all_on_court():
+            motor = pcs.player.attributes.mental.motor
+            if motor < 40 and self._rng.random() < 0.15:
+                # Low motor player takes a possession off (reduced hustle)
+                pcs.fsm.context["low_effort_possession"] = True
+            else:
+                pcs.fsm.context["low_effort_possession"] = False
+
         # Coach AI between possessions
         self._check_coach_decisions(home_on_offense)
         self.confidence.decay_all()
@@ -786,9 +955,30 @@ class GameSimulator:
             pcs.fsm.is_offense = False
 
     def _select_play(self, home_on_offense: bool, situation_type: object) -> PlayDefinition:
-        """Coach selects a play based on situation and personnel."""
+        """Coach selects a play based on situation, personnel, and coaching personality.
+
+        Integrates Phase 5: CoachingStaff personality influences play selection.
+        """
         plays = [PICK_AND_ROLL, ISOLATION, MOTION_OFFENSE, POST_UP, FAST_BREAK]
         weights = [0.30, 0.15, 0.25, 0.15, 0.15]
+
+        # Phase 5: Coaching personality biases play selection
+        from hoops_sim.models.coaching_staff import CoachPersonality
+        coach_pers = (self._home_coach_personality if home_on_offense
+                      else self._away_coach_personality)
+        if coach_pers is not None:
+            if coach_pers == CoachPersonality.AGGRESSIVE:
+                weights[4] *= 1.8  # More fast breaks
+                weights[0] *= 1.3  # More PnR (aggressive actions)
+            elif coach_pers == CoachPersonality.DEFENSIVE:
+                weights[2] *= 1.5  # More motion offense (patient)
+                weights[1] *= 0.7  # Fewer ISOs
+            elif coach_pers == CoachPersonality.OFFENSIVE:
+                weights[0] *= 1.5  # More PnR
+                weights[1] *= 1.3  # More ISO
+            elif coach_pers == CoachPersonality.OLD_SCHOOL:
+                weights[3] *= 2.0  # Much more post-up
+                weights[4] *= 0.7  # Fewer fast breaks
 
         # Adjust weights based on personnel
         offense = self.court.offensive_players(home_on_offense)
@@ -932,13 +1122,14 @@ class GameSimulator:
                 "intensity": line.intensity,
             })
 
-    def _advance_clock(self, seconds: float) -> None:
+    def _advance_clock(self, seconds: float) -> list:
         """Advance the game clock by the given seconds.
 
-        Delegates to GameClock.tick() so the is_running guard is respected.
+        Phase 9: Now delegates to TickEngine.advance() which decomposes
+        variable-dt into fixed sub-ticks, firing all registered callbacks.
+        Returns any TickEvents that occurred (shot clock violation, quarter end).
         """
-        gs = self.game_state
-        gs.clock.tick(seconds)
+        return self.tick_engine.advance(seconds)
 
     def _check_quarter_end(self) -> bool:
         """Check if the quarter has ended and handle it."""
@@ -1033,18 +1224,20 @@ class GameSimulator:
     def _find_spot_up_position(
         self, pcs: PlayerCourtState, home_on_offense: bool,
     ) -> Vec2:
-        """Find a good spot-up position for spacing."""
-        basket = self.court.basket_position(home_on_offense)
-        direction = pcs.position - basket
-        if direction.magnitude() < 0.1:
-            direction = Vec2(1.0, 0.0)
-        direction = direction.normalized()
+        """Find a good spot-up position for spacing.
 
-        if pcs.player.attributes.shooting.three_point > 65:
-            # Spot up on the arc
-            return basket + direction * 24.0
-        else:
-            return basket + direction * 14.0
+        Phase 6: Now delegates to movement.off_ball.calculate_spot_up_position.
+        """
+        basket = self.court.basket_position(home_on_offense)
+        ball_handler = self.court.ball_handler()
+        ball_pos = ball_handler.position if ball_handler else basket
+        is_shooter = pcs.player.attributes.shooting.three_point > 65
+        return calculate_spot_up_position(
+            ball_position=ball_pos,
+            current_position=pcs.position,
+            basket_position=basket,
+            is_shooter=is_shooter,
+        )
 
     # -- Player AI ------------------------------------------------------------
 
@@ -1115,6 +1308,11 @@ class GameSimulator:
         def_positions = [d.position for d in defenders]
         basket = self.court.basket_position(home_on_offense)
         qualities: list[tuple[int, float]] = []
+
+        # playmaking.pass_iq: high pass IQ players evaluate opportunities better
+        pass_iq = handler.player.attributes.playmaking.pass_iq
+        pass_iq_bonus = (pass_iq - 50) / 500.0  # -0.1 to +0.1
+
         for tm in teammates:
             if tm.player_id == handler.player_id:
                 continue
@@ -1131,7 +1329,7 @@ class GameSimulator:
                 + openness * 0.4
                 + (1.0 - clamp(recv_dist / 30.0, 0.0, 1.0)) * 0.3
             )
-            quality = lane.quality * 0.5 + scoring * 0.5
+            quality = lane.quality * 0.5 + scoring * 0.5 + pass_iq_bonus
             qualities.append((tm.player_id, clamp(quality, 0.0, 1.0)))
         return qualities
 
@@ -1192,6 +1390,15 @@ class GameSimulator:
             self._turnover(handler, home_on_offense)
             return False
 
+        # defense.pick_dodger attribute + pick_dodger badge: reduces screen effectiveness
+        pick_dodge = defender.attributes.defense.pick_dodger
+        if pick_dodge > 65:
+            screen_result.separation_created *= 1.0 - (pick_dodge - 65) * 0.005
+        if defender.badges.has_badge("pick_dodger"):
+            screen_result.separation_created *= 1.0 - (
+                defender.badges.tier_multiplier("pick_dodger") - 1.0
+            ) * 2.0
+
         # Evaluate PnR defensive coverage
         coverage_type = self._rng.choice([
             PnRCoverageType.DROP, PnRCoverageType.SWITCH,
@@ -1240,7 +1447,16 @@ class GameSimulator:
             )
 
         # Apply separation from screen
-        handler.fsm.defender_separation += screen_result.separation_created
+        separation = screen_result.separation_created
+
+        # Phase 4: Relationship trust bonus on screen quality
+        team = self.home_team if home_on_offense else self.away_team
+        rel_matrix = getattr(team, "relationships", None)
+        if rel_matrix is not None:
+            rel = rel_matrix.get(handler.player_id, self._pending_screener_id)
+            separation += rel.on_court_screen_mod() * 10.0  # Scale to feet
+
+        handler.fsm.defender_separation += separation
 
         # Emit screen event
         self._broadcast_event(ScreenEvent(
@@ -1267,7 +1483,14 @@ class GameSimulator:
         """Execute a dribble move using the full dribble system.
 
         Hard cap: 3 moves per chain (4 for ball_handle > 90).
+        Integrates Phase 1 slip risk from CourtSurface.
         """
+        # Phase 1: Slip check -- high-intensity dribble moves risk slipping on bad surfaces
+        slip_prob = self.surface.get_slip_probability()
+        if self._phys_rng.random() < slip_prob:
+            self._turnover(handler, home_on_offense)
+            return
+
         # Dribble move cap: skip if at maximum
         if not handler.fsm.can_dribble:
             return
@@ -1430,11 +1653,39 @@ class GameSimulator:
         effective_def_dist = def_dist + handler.fsm.defender_separation * 0.3
         contest_quality = clamp(1.0 - effective_def_dist / 6.0, 0.0, 1.0)
 
-        rim_protector = any(
-            d.position.distance_to(basket) < 8.0
-            and d.player.attributes.defense.block > 70
-            for d in self.court.defensive_players(home_on_offense)
-        )
+        # Phase 5: Defensive scheme quality boosts contest effectiveness
+        def_scheme = self._away_def_scheme if is_home else self._home_def_scheme
+        contest_quality *= 1.0 + (def_scheme - 50) / 500.0  # +/- up to ~10%
+
+        # Rim protector check -- now uses rim_protector badge for bonus
+        rim_protector = False
+        for d in self.court.defensive_players(home_on_offense):
+            if d.position.distance_to(basket) < 8.0 and d.player.attributes.defense.block > 70:
+                rim_protector = True
+                # Badge: rim_protector -- further boost to rim protection
+                if d.player.badges.has_badge("rim_protector"):
+                    contest_quality += d.player.badges.tier_multiplier("rim_protector") - 1.0
+                break
+
+        # Closest defender: use interior_defense or perimeter_defense based on zone
+        closest_def = self.court.closest_defender_to(handler.position, home_on_offense)
+        if closest_def and effective_def_dist < 6.0:
+            defender = closest_def.player
+            if zone_info.is_paint:
+                # interior_defense boosts contest in paint
+                contest_quality *= 1.0 + (defender.attributes.defense.interior_defense - 50) / 300.0
+            else:
+                # perimeter_defense boosts contest on perimeter
+                contest_quality *= 1.0 + (defender.attributes.defense.perimeter_defense - 50) / 300.0
+
+            # Badge: intimidator -- reduces opponent shot% when nearby
+            if defender.badges.has_badge("intimidator"):
+                contest_quality += (defender.badges.tier_multiplier("intimidator") - 1.0) * 2.0
+
+            # defensive_consistency reduces variance in contest
+            contest_quality *= 1.0 + (defender.attributes.defense.defensive_consistency - 50) / 500.0
+
+        contest_quality = clamp(contest_quality, 0.0, 1.0)
 
         stats = self._player_stats(player.id, is_home)
         ctx = ShotContext(
@@ -1461,11 +1712,69 @@ class GameSimulator:
         )
 
         make_prob = calculate_shot_probability(ctx)
+
+        # shot_consistency reduces variance: high consistency = make_prob stays closer to base
+        consistency = player.attributes.shooting.shot_consistency
+        if consistency > 70:
+            # Pull probability toward base slightly (reduce random cold stretches)
+            make_prob = make_prob * 0.85 + (base_rating / 99.0 * 0.5) * 0.15
+
+        # shot_iq: smart shooters avoid bad shots (this is checked earlier in AI but
+        # also slightly boosts probability -- they pick better moments)
+        shot_iq = player.attributes.shooting.shot_iq
+        if shot_iq > 70:
+            make_prob += (shot_iq - 70) * 0.001  # Up to +3% for elite shot IQ
+
+        # Badge: deep_threes -- extended range effectiveness
+        if is_three and dist > 26.0 and player.badges.has_badge("deep_threes"):
+            make_prob *= player.badges.tier_multiplier("deep_threes")
+
+        # Badge: green_machine -- consecutive makes bonus
+        if stats.fgm > 0 and stats.fga > 0:
+            recent_pct = stats.fgm / stats.fga
+            if recent_pct > 0.6 and player.badges.has_badge("green_machine"):
+                make_prob += (player.badges.tier_multiplier("green_machine") - 1.0) * 1.5
+
+        # Badge: ice_in_veins -- clutch/FT situations
+        if gs.clock.is_clutch_time() and player.badges.has_badge("ice_in_veins"):
+            make_prob *= player.badges.tier_multiplier("ice_in_veins")
+
+        # Badge: clutch_performer -- reduces pressure penalty in clutch
+        if gs.clock.is_clutch_time() and player.badges.has_badge("clutch_performer"):
+            make_prob += (player.badges.tier_multiplier("clutch_performer") - 1.0) * 2.0
+
+        # mental.composure -- performance under pressure / hostile crowds
+        composure = player.attributes.mental.composure
+        if not is_home and composure < 50:
+            # Poor composure on the road = slight penalty
+            make_prob *= 1.0 - (50 - composure) * 0.001
+
+        # Badge: microwave -- gets hot faster (fewer consecutive makes needed)
+        if player.badges.has_badge("microwave"):
+            conf = self.confidence.get(player.id)
+            if conf > 0.05:  # Any positive confidence = microwave kicks in
+                make_prob += (player.badges.tier_multiplier("microwave") - 1.0) * 1.5
+
+        # Badge: alpha_dog -- performance boost when team needs a leader
+        if player.badges.has_badge("alpha_dog"):
+            score_diff = gs.score.diff if is_home else -gs.score.diff
+            if score_diff < -5:  # Team is losing by 5+
+                make_prob += (player.badges.tier_multiplier("alpha_dog") - 1.0) * 2.0
         # Momentum modifier
         if is_home:
             make_prob *= self.momentum.home_modifier()
         else:
             make_prob *= self.momentum.away_modifier()
+
+        # Phase 1: Home court advantage -- slight boost to home team shooting
+        if is_home:
+            make_prob += self._home_court_advantage
+
+        # Phase 3: Lifestyle game-day focus modifier
+        lifestyle = getattr(player, "lifestyle", None)
+        if lifestyle is not None:
+            make_prob *= lifestyle.game_day_focus()
+
         make_prob = clamp(make_prob, 0.02, 0.98)
 
         # Update FSM to shooting state
@@ -1545,6 +1854,16 @@ class GameSimulator:
             closest_def = self.court.closest_defender_to(handler.position, home_on_offense)
             if closest_def and def_dist < 3.0:
                 block_chance = closest_def.player.attributes.defense.block / 99.0 * 0.15
+
+                # shot_speed: faster releases are harder to block
+                shot_speed = player.attributes.shooting.shot_speed
+                if shot_speed > 70:
+                    block_chance *= 1.0 - (shot_speed - 70) * 0.005  # Up to -15% block chance
+
+                # Badge: chase_down_artist -- increased block chance from behind
+                if closest_def.player.badges.has_badge("chase_down_artist"):
+                    block_chance *= closest_def.player.badges.tier_multiplier("chase_down_artist")
+
                 if self._phys_rng.random() < block_chance:
                     blocked = True
                     self.scoreboard.record_block(
@@ -1575,6 +1894,33 @@ class GameSimulator:
                     **self._make_base_fields(),
                 ))
 
+            # Phase 8: Backboard physics -- check if the miss hits the backboard
+            # Approximate ball trajectory for backboard check
+            attacking_right = self.court.attacking_right(home_on_offense)
+            ball_pos_3d = Vec3(handler.position.x, handler.position.y, 10.0)
+            to_basket_3d = Vec3(basket.x - handler.position.x,
+                                basket.y - handler.position.y, 0.0)
+            backboard_hit = check_backboard_hit(
+                ball_position=ball_pos_3d,
+                ball_velocity=to_basket_3d,
+                attacking_right=attacking_right,
+            )
+            if backboard_hit.hit:
+                # Bank shot chance: backboard contact may redirect the ball in
+                bank_chance = 0.15 if dist < 15.0 else 0.05
+                if self._phys_rng.random() < bank_chance:
+                    # Bank shot goes in! Record as made basket
+                    self.scoreboard.record_basket(
+                        player_id=player.id,
+                        player_name=player.full_name,
+                        is_home=is_home,
+                        points=points,
+                        is_three=is_three,
+                    )
+                    handler.fsm.defender_separation = 3.0
+                    handler.fsm.reset_combo()
+                    return ShotOutcome.MADE
+
             # Rebound -- check if offense retained possession
             oreb = self._resolve_rebound(home_on_offense)
 
@@ -1595,10 +1941,18 @@ class GameSimulator:
         is_home = home_on_offense
         basket = self.court.basket_position(home_on_offense)
 
+        # athleticism.acceleration affects first-step quickness on drives
+        accel = player.attributes.athleticism.acceleration
+        drive_ticks = self._rng.randint(8, 15)
+        if accel > 75:
+            drive_ticks = max(5, drive_ticks - 2)  # Faster first step
+        elif accel < 40:
+            drive_ticks += 2  # Slow first step
+
         # Transition to driving state
         handler.fsm.transition_to(
             BallHandlerState.DRIVING,
-            ticks=self._rng.randint(8, 15),
+            ticks=drive_ticks,
             target=basket,
             intent=MovementIntent.SPRINT,
         )
@@ -1631,8 +1985,14 @@ class GameSimulator:
         # Consume drive time
         self._advance_clock(self._rng.uniform(1.5, 3.0))
 
+        # Phase 1: Slip check during high-intensity drive
+        slip_prob = self.surface.get_slip_probability()
+        if self._phys_rng.random() < slip_prob * 1.5:  # Drives are higher intensity
+            self._turnover(handler, is_home)
+            return True
+
         # Turnover chance
-        to_chance = 0.07 + (1.0 - player.attributes.playmaking.ball_handle / 99.0) * 0.07
+        to_chance = DRIVE_TURNOVER_BASE_CHANCE + (1.0 - player.attributes.playmaking.ball_handle / 99.0) * DRIVE_TURNOVER_SKILL_FACTOR
         if self._phys_rng.random() < to_chance:
             self._turnover(handler, is_home)
             return True
@@ -1656,6 +2016,17 @@ class GameSimulator:
             for d in self.court.defensive_players(home_on_offense)
             if d.position.distance_to(basket) < 8.0
         )
+
+        # Badge: clamps -- closest defender is harder to beat on drives
+        if closest_def and closest_def.player.badges.has_badge("clamps"):
+            clamp_bonus = closest_def.player.badges.tier_multiplier("clamps") - 1.0
+            def_dist = max(0.5, def_dist - clamp_bonus * 3.0)  # Clamps closes distance
+
+        # on_ball_defense attribute affects defender stickiness
+        if closest_def:
+            obd = closest_def.player.attributes.defense.on_ball_defense
+            if obd > 70:
+                def_dist = max(0.5, def_dist - (obd - 70) * 0.02)
 
         finish = select_finish_type(
             layup=player.attributes.finishing.layup,
@@ -1702,6 +2073,14 @@ class GameSimulator:
         )
         make_prob = calculate_shot_probability(ctx)
         make_prob += finish.success_modifier
+
+        # Badge: giant_slayer -- boost when finishing against taller defenders
+        if closest_def and player.badges.has_badge("giant_slayer"):
+            height_diff = (closest_def.player.body.height_inches
+                           - player.body.height_inches)
+            if height_diff > 3:  # Defender is 3+ inches taller
+                make_prob += (player.badges.tier_multiplier("giant_slayer") - 1.0) * 2.5
+
         make_prob = clamp(make_prob, 0.05, 0.95)
         made = self._phys_rng.random() < make_prob
         stats = self._player_stats(player.id, is_home)
@@ -1791,13 +2170,23 @@ class GameSimulator:
 
         # Use the full pass resolution system
         def_dist = self.court.defender_distance(handler.player_id, home_on_offense)
+
+        # Phase 4: Relationship trust modifier on lane quality
+        effective_lane_quality = lane.quality
+        team = self.home_team if home_on_offense else self.away_team
+        rel_matrix = getattr(team, "relationships", None)
+        if rel_matrix is not None:
+            rel = rel_matrix.get(handler.player_id, target_id)
+            effective_lane_quality += rel.on_court_passing_mod()
+            effective_lane_quality = clamp(effective_lane_quality, 0.0, 1.0)
+
         result = resolve_pass(
             pass_accuracy=player.attributes.playmaking.pass_accuracy,
             pass_vision=player.attributes.playmaking.pass_vision,
             receiver_hands=target.player.attributes.playmaking.ball_handle,  # Proxy for catching
             pass_type=pass_type,
             distance=dist,
-            lane_quality=lane.quality,
+            lane_quality=effective_lane_quality,
             is_under_pressure=def_dist < 3.0,
             has_needle_threader=player.badges.has_badge("needle_threader"),
             has_bail_out=player.badges.has_badge("bail_out"),
@@ -1806,15 +2195,34 @@ class GameSimulator:
 
         if result.turnover:
             if result.intercepted:
+                # Find the closest defender to the passing lane midpoint
+                lane_mid = (handler.position + target.position) * 0.5
                 stealer = min(
                     defenders,
-                    key=lambda d: d.position.distance_to(
-                        (handler.position + target.position) * 0.5,
-                    ),
+                    key=lambda d: d.position.distance_to(lane_mid),
                 ) if defenders else None
+
+                # Badge: interceptor -- increased steal chance on passing lanes
+                # (Pass already failed, but interceptor affects WHO gets it)
+                if stealer and stealer.player.badges.has_badge("interceptor"):
+                    # Interceptor badge holder is more likely to be the stealer
+                    # even if not closest -- check if any defender with interceptor
+                    # is within range
+                    for d in defenders:
+                        if (d.player.badges.has_badge("interceptor")
+                                and d.position.distance_to(lane_mid) < 10.0):
+                            stealer = d
+                            break
+
                 self._steal(handler, stealer, is_home)
             else:
-                self._turnover(handler, is_home)
+                # playmaking.hands affects catching -- poor hands = more fumbles
+                receiver_hands = target.player.attributes.playmaking.hands
+                if receiver_hands < 40 and self._phys_rng.random() < 0.1:
+                    # Fumbled catch becomes turnover
+                    self._turnover(handler, is_home)
+                else:
+                    self._turnover(handler, is_home)
             return True
 
         # Successful pass -- emit broadcast event
@@ -1931,6 +2339,11 @@ class GameSimulator:
             clutch_rating=player.attributes.mental.clutch,
         )
         make_prob = calculate_shot_probability(ctx)
+
+        # Badge: dream_shake -- improved post moves and fakes
+        if player.badges.has_badge("dream_shake"):
+            make_prob *= player.badges.tier_multiplier("dream_shake")
+
         made = self._phys_rng.random() < make_prob
 
         if made:
@@ -1976,22 +2389,47 @@ class GameSimulator:
 
         for pcs in offense:
             dist = pcs.position.distance_to(basket)
-            if dist > 20.0:
+            # Badge: rebound_chaser -- extends effective rebound range
+            max_reb_dist = 20.0
+            if pcs.player.badges.has_badge("rebound_chaser"):
+                max_reb_dist += 5.0 * (pcs.player.badges.tier_value("rebound_chaser"))
+            if dist > max_reb_dist:
                 continue
             reb = pcs.player.attributes.rebounding.offensive_rebound
             prox = max(0, 1.0 - dist / 15.0)
             chance = (reb / 99.0) * 0.5 + prox * 0.3 + pcs.player.tendencies.crash_boards * 0.2
+
+            # Badge: worm -- swim around box-outs for offensive rebounds
+            if pcs.player.badges.has_badge("worm"):
+                chance *= pcs.player.badges.tier_multiplier("worm")
+
+            # athleticism.hustle -- effort on loose balls/rebounds
+            hustle = pcs.player.attributes.athleticism.hustle
+            chance *= 1.0 + (hustle - 50) / 300.0
+
             candidates.append((pcs, chance * 0.30, True))
 
         for pcs in defense:
             dist = pcs.position.distance_to(basket)
-            if dist > 20.0:
+            max_reb_dist = 20.0
+            if pcs.player.badges.has_badge("rebound_chaser"):
+                max_reb_dist += 5.0 * (pcs.player.badges.tier_value("rebound_chaser"))
+            if dist > max_reb_dist:
                 continue
             reb = pcs.player.attributes.rebounding.defensive_rebound
             prox = max(0, 1.0 - dist / 15.0)
-            chance = (reb / 99.0) * 0.5 + prox * 0.3 + (
-                pcs.player.attributes.rebounding.box_out / 99.0 * 0.2
-            )
+            box_out = pcs.player.attributes.rebounding.box_out / 99.0
+
+            # Badge: box_out_beast -- improved box-out effectiveness
+            if pcs.player.badges.has_badge("box_out_beast"):
+                box_out *= pcs.player.badges.tier_multiplier("box_out_beast")
+
+            chance = (reb / 99.0) * 0.5 + prox * 0.3 + box_out * 0.2
+
+            # athleticism.hustle on defensive rebounds too
+            hustle = pcs.player.attributes.athleticism.hustle
+            chance *= 1.0 + (hustle - 50) / 300.0
+
             candidates.append((pcs, chance, False))
 
         if not candidates:
@@ -2140,6 +2578,19 @@ class GameSimulator:
                 is_foul_trouble=closest.fouls >= 4,
                 **self._make_base_fields(),
             ))
+
+        # Phase 2: Tech foul check -- fouled player may complain to refs
+        personality = getattr(handler.player, "personality", None)
+        if personality is not None:
+            tech_chance = personality.tech_foul_tendency()
+            if self._rng.random() < tech_chance:
+                # Technical foul on the fouled player for arguing
+                handler_is_home = is_home
+                if handler_is_home:
+                    gs.home_team_fouls += 1
+                else:
+                    gs.away_team_fouls += 1
+
         self._free_throws(handler, 2, is_home)
 
     def _shot_clock_violation(self, home_on_offense: bool) -> None:
@@ -2187,11 +2638,42 @@ class GameSimulator:
     # -- Energy ---------------------------------------------------------------
 
     def _drain_energy_for_ticks(self, num_ticks: int) -> None:
-        """Drain energy for on-court players for a given number of ticks."""
+        """Drain energy for on-court players for a given number of ticks.
+
+        Integrates:
+        - Phase 1: Altitude stamina drain modifier from CourtSurface
+        - Phase 3: Lifestyle recovery modifier from PlayerLifestyle
+        - Phase 5: Conditioning coach modifier from CoachingStaff
+        """
         for pcs in self.court.all_on_court():
-            pcs.energy.drain(ENERGY_DRAIN_JOG * num_ticks)
+            is_home = self._is_home_player(pcs)
+            base_drain = ENERGY_DRAIN_JOG * num_ticks
+
+            # athleticism.stamina: higher stamina = slower energy drain
+            stamina = pcs.player.attributes.athleticism.stamina
+            stamina_mod = 1.0 - (stamina - 50) / 200.0  # Range ~0.75 to 1.25
+            base_drain *= stamina_mod
+
+            # Phase 1: Visiting team drains faster at altitude
+            if not is_home:
+                base_drain *= self._altitude_stamina_mod
+
+            # Phase 5: Conditioning coach reduces drain for their team
+            cond_mod = self._home_conditioning_mod if is_home else self._away_conditioning_mod
+            base_drain *= cond_mod
+
+            pcs.energy.drain(base_drain)
+
         for pcs in self.court.home_bench + self.court.away_bench:
-            pcs.energy.recover(ENERGY_RECOVERY_BENCH * num_ticks)
+            base_recovery = ENERGY_RECOVERY_BENCH * num_ticks
+
+            # Phase 3: Lifestyle affects bench recovery rate
+            lifestyle = getattr(pcs.player, "lifestyle", None)
+            if lifestyle is not None:
+                base_recovery *= lifestyle.daily_recovery_modifier()
+
+            pcs.energy.recover(base_recovery)
+
         # Track minutes
         seconds = num_ticks * TICK_DURATION
         for pcs in self.court.all_on_court():
@@ -2221,10 +2703,18 @@ class GameSimulator:
                     break
 
         # Timeout check
+        # Phase 5: Better game management = more responsive timeout calling
         is_def_home = not home_on_offense
         timeouts = gs.home_timeouts if is_def_home else gs.away_timeouts
+        game_mgmt = self._home_game_management if is_def_home else self._away_game_management
+        # Good coaches (game_management > 70) see shorter runs as problems
+        effective_run = self._opponent_run
+        if game_mgmt > 70:
+            effective_run = int(self._opponent_run * 1.3)  # Reacts sooner
+        elif game_mgmt < 30:
+            effective_run = int(self._opponent_run * 0.7)  # Slow to react
         if should_call_timeout(
-            opponent_run=self._opponent_run,
+            opponent_run=effective_run,
             own_turnovers_last_3=sum(1 for x in self._own_turnovers_recent[-3:] if x),
             timeouts_remaining=timeouts,
             is_clutch=gs.clock.is_clutch_time(),

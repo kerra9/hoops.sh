@@ -152,3 +152,38 @@ CAROM_BACKSPIN_DAMPEN_FACTOR = 400.0  # divisor for backspin distance reduction
 CAROM_DISTANCE_BASE = 0.3  # feet per unit of contact angle
 CAROM_NOISE_DEGREES = 15.0  # randomness in carom angle
 CAROM_NOISE_DISTANCE = 1.5  # randomness in carom distance (feet)
+
+# =============================================================================
+# Gameplay Tuning (previously inline magic numbers in simulator.py)
+# =============================================================================
+# Dribble move thresholds
+DRIBBLE_MOVE_BEFORE_SHOT_DISTANCE = 5.0  # defender distance (ft) to trigger pre-shot dribble
+DRIBBLE_MOVE_BEFORE_SHOT_CHANCE = 0.4
+DRIBBLE_MOVE_BEFORE_DRIVE_CHANCE = 0.6
+
+# Shot selection thresholds
+EARLY_POSSESSION_PASS_BIAS_TICKS = 30  # ticks before pass bias kicks in
+EARLY_POSSESSION_PASS_BIAS_CHANCE = 0.50
+SHOOTER_THREE_POINT_THRESHOLD = 65  # attribute level to be considered a "shooter"
+
+# Drive thresholds
+DRIVE_TURNOVER_BASE_CHANCE = 0.07
+DRIVE_TURNOVER_SKILL_FACTOR = 0.07
+DRIVE_KICKOUT_DISTANCE = 10.0  # ft from basket to consider kicking out
+DRIVE_KICKOUT_CHANCE = 0.3
+
+# Screen thresholds
+SCREENER_WEIGHT_THRESHOLD = 200  # lbs to set off-ball screens
+SCREENER_STRENGTH_THRESHOLD = 65  # strength attribute for screening
+
+# Rebound range
+MAX_REBOUND_DISTANCE = 20.0  # base max distance to compete for rebound (ft)
+
+# Block thresholds
+BLOCK_RATING_THRESHOLD = 70  # block attribute to be a rim protector
+BLOCK_BASE_CHANCE = 0.15  # base block probability multiplier
+
+# Bank shot probability
+BANK_SHOT_CLOSE_CHANCE = 0.15  # bank chance for close shots
+BANK_SHOT_FAR_CHANCE = 0.05  # bank chance for distant shots
+BANK_SHOT_DISTANCE_THRESHOLD = 15.0  # ft -- shots closer get better bank chance
