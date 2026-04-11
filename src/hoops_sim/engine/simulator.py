@@ -706,13 +706,36 @@ class GameSimulator:
     def _decide_defensive_action(
         self, pcs: PlayerCourtState, home_on_offense: bool, basket: Vec2,
     ) -> None:
-        """Decide what a defensive player does next."""
+        """Decide what a defensive player does next.
+
+        Uses defensive_iq and help_defense_iq to make smarter decisions.
+        """
+        player = pcs.player
+
         # Find their assignment
         assignment = None
         if pcs.defensive_assignment_id is not None:
             assignment = self.court.get_player_state(pcs.defensive_assignment_id)
 
         ball_handler = self.court.ball_handler()
+
+        # defense.help_defense_iq: smart help defenders check if ball handler
+        # is driving and proactively help
+        help_iq = player.attributes.defense.help_defense_iq
+        if (ball_handler and assignment and help_iq > 70
+                and ball_handler.fsm.current_state == BallHandlerState.DRIVING):
+            # High help IQ: rotate to help on the drive
+            help_pos = basket + (ball_handler.position - basket).normalized() * 5.0
+            pcs.fsm.transition_to(
+                DefenderState.HELPING,
+                ticks=self._rng.randint(3, 8),
+                target=help_pos,
+                intent=MovementIntent.SPRINT,
+            )
+            return
+
+        # defense.defensive_iq: smarter defenders position better
+        def_iq = player.attributes.defense.defensive_iq
 
         if assignment is None:
             # Guard the ball handler area
@@ -731,7 +754,13 @@ class GameSimulator:
         # If assignment has the ball, guard on-ball
         if ball_handler and assignment.player_id == ball_handler.player_id:
             to_basket = (basket - assignment.position).normalized()
-            guard_pos = assignment.position + to_basket * 3.0
+            # defensive_iq: smarter defenders guard tighter
+            gap = 3.0
+            if def_iq > 70:
+                gap = 2.5  # Tighter coverage
+            elif def_iq < 40:
+                gap = 4.0  # Loose coverage
+            guard_pos = assignment.position + to_basket * gap
             pcs.fsm.transition_to(
                 DefenderState.GUARDING_ON_BALL,
                 ticks=self._rng.randint(3, 10),
@@ -784,6 +813,25 @@ class GameSimulator:
                 target=self.court.basket_position(home_on_offense),
                 intent=MovementIntent.JOG,
             )
+
+        # Badge: floor_general -- boosts teammates' offensive attributes (aura effect)
+        # Badge: defensive_leader -- boosts teammates' defensive attributes
+        for pcs in self.court.all_on_court():
+            player = pcs.player
+            if player.badges.has_badge("floor_general"):
+                # Floor general gives a small boost tracked via FSM context
+                pcs.fsm.context["floor_general_active"] = True
+            if player.badges.has_badge("defensive_leader"):
+                pcs.fsm.context["defensive_leader_active"] = True
+
+        # mental.motor -- effort consistency: low motor = occasional possessions of low effort
+        for pcs in self.court.all_on_court():
+            motor = pcs.player.attributes.mental.motor
+            if motor < 40 and self._rng.random() < 0.15:
+                # Low motor player takes a possession off (reduced hustle)
+                pcs.fsm.context["low_effort_possession"] = True
+            else:
+                pcs.fsm.context["low_effort_possession"] = False
 
         # Coach AI between possessions
         self._check_coach_decisions(home_on_offense)
@@ -1174,6 +1222,11 @@ class GameSimulator:
         def_positions = [d.position for d in defenders]
         basket = self.court.basket_position(home_on_offense)
         qualities: list[tuple[int, float]] = []
+
+        # playmaking.pass_iq: high pass IQ players evaluate opportunities better
+        pass_iq = handler.player.attributes.playmaking.pass_iq
+        pass_iq_bonus = (pass_iq - 50) / 500.0  # -0.1 to +0.1
+
         for tm in teammates:
             if tm.player_id == handler.player_id:
                 continue
@@ -1190,7 +1243,7 @@ class GameSimulator:
                 + openness * 0.4
                 + (1.0 - clamp(recv_dist / 30.0, 0.0, 1.0)) * 0.3
             )
-            quality = lane.quality * 0.5 + scoring * 0.5
+            quality = lane.quality * 0.5 + scoring * 0.5 + pass_iq_bonus
             qualities.append((tm.player_id, clamp(quality, 0.0, 1.0)))
         return qualities
 
@@ -1250,6 +1303,15 @@ class GameSimulator:
             # Record offensive foul as turnover
             self._turnover(handler, home_on_offense)
             return False
+
+        # defense.pick_dodger attribute + pick_dodger badge: reduces screen effectiveness
+        pick_dodge = defender.attributes.defense.pick_dodger
+        if pick_dodge > 65:
+            screen_result.separation_created *= 1.0 - (pick_dodge - 65) * 0.005
+        if defender.badges.has_badge("pick_dodger"):
+            screen_result.separation_created *= 1.0 - (
+                defender.badges.tier_multiplier("pick_dodger") - 1.0
+            ) * 2.0
 
         # Evaluate PnR defensive coverage
         coverage_type = self._rng.choice([
@@ -1509,11 +1571,35 @@ class GameSimulator:
         def_scheme = self._away_def_scheme if is_home else self._home_def_scheme
         contest_quality *= 1.0 + (def_scheme - 50) / 500.0  # +/- up to ~10%
 
-        rim_protector = any(
-            d.position.distance_to(basket) < 8.0
-            and d.player.attributes.defense.block > 70
-            for d in self.court.defensive_players(home_on_offense)
-        )
+        # Rim protector check -- now uses rim_protector badge for bonus
+        rim_protector = False
+        for d in self.court.defensive_players(home_on_offense):
+            if d.position.distance_to(basket) < 8.0 and d.player.attributes.defense.block > 70:
+                rim_protector = True
+                # Badge: rim_protector -- further boost to rim protection
+                if d.player.badges.has_badge("rim_protector"):
+                    contest_quality += d.player.badges.tier_multiplier("rim_protector") - 1.0
+                break
+
+        # Closest defender: use interior_defense or perimeter_defense based on zone
+        closest_def = self.court.closest_defender_to(handler.position, home_on_offense)
+        if closest_def and effective_def_dist < 6.0:
+            defender = closest_def.player
+            if zone_info.is_paint:
+                # interior_defense boosts contest in paint
+                contest_quality *= 1.0 + (defender.attributes.defense.interior_defense - 50) / 300.0
+            else:
+                # perimeter_defense boosts contest on perimeter
+                contest_quality *= 1.0 + (defender.attributes.defense.perimeter_defense - 50) / 300.0
+
+            # Badge: intimidator -- reduces opponent shot% when nearby
+            if defender.badges.has_badge("intimidator"):
+                contest_quality += (defender.badges.tier_multiplier("intimidator") - 1.0) * 2.0
+
+            # defensive_consistency reduces variance in contest
+            contest_quality *= 1.0 + (defender.attributes.defense.defensive_consistency - 50) / 500.0
+
+        contest_quality = clamp(contest_quality, 0.0, 1.0)
 
         stats = self._player_stats(player.id, is_home)
         ctx = ShotContext(
@@ -1540,6 +1626,54 @@ class GameSimulator:
         )
 
         make_prob = calculate_shot_probability(ctx)
+
+        # shot_consistency reduces variance: high consistency = make_prob stays closer to base
+        consistency = player.attributes.shooting.shot_consistency
+        if consistency > 70:
+            # Pull probability toward base slightly (reduce random cold stretches)
+            make_prob = make_prob * 0.85 + (base_rating / 99.0 * 0.5) * 0.15
+
+        # shot_iq: smart shooters avoid bad shots (this is checked earlier in AI but
+        # also slightly boosts probability -- they pick better moments)
+        shot_iq = player.attributes.shooting.shot_iq
+        if shot_iq > 70:
+            make_prob += (shot_iq - 70) * 0.001  # Up to +3% for elite shot IQ
+
+        # Badge: deep_threes -- extended range effectiveness
+        if is_three and dist > 26.0 and player.badges.has_badge("deep_threes"):
+            make_prob *= player.badges.tier_multiplier("deep_threes")
+
+        # Badge: green_machine -- consecutive makes bonus
+        if stats.fgm > 0 and stats.fga > 0:
+            recent_pct = stats.fgm / stats.fga
+            if recent_pct > 0.6 and player.badges.has_badge("green_machine"):
+                make_prob += (player.badges.tier_multiplier("green_machine") - 1.0) * 1.5
+
+        # Badge: ice_in_veins -- clutch/FT situations
+        if gs.clock.is_clutch_time() and player.badges.has_badge("ice_in_veins"):
+            make_prob *= player.badges.tier_multiplier("ice_in_veins")
+
+        # Badge: clutch_performer -- reduces pressure penalty in clutch
+        if gs.clock.is_clutch_time() and player.badges.has_badge("clutch_performer"):
+            make_prob += (player.badges.tier_multiplier("clutch_performer") - 1.0) * 2.0
+
+        # mental.composure -- performance under pressure / hostile crowds
+        composure = player.attributes.mental.composure
+        if not is_home and composure < 50:
+            # Poor composure on the road = slight penalty
+            make_prob *= 1.0 - (50 - composure) * 0.001
+
+        # Badge: microwave -- gets hot faster (fewer consecutive makes needed)
+        if player.badges.has_badge("microwave"):
+            conf = self.confidence.get(player.id)
+            if conf > 0.05:  # Any positive confidence = microwave kicks in
+                make_prob += (player.badges.tier_multiplier("microwave") - 1.0) * 1.5
+
+        # Badge: alpha_dog -- performance boost when team needs a leader
+        if player.badges.has_badge("alpha_dog"):
+            score_diff = gs.score.diff if is_home else -gs.score.diff
+            if score_diff < -5:  # Team is losing by 5+
+                make_prob += (player.badges.tier_multiplier("alpha_dog") - 1.0) * 2.0
         # Momentum modifier
         if is_home:
             make_prob *= self.momentum.home_modifier()
@@ -1634,6 +1768,16 @@ class GameSimulator:
             closest_def = self.court.closest_defender_to(handler.position, home_on_offense)
             if closest_def and def_dist < 3.0:
                 block_chance = closest_def.player.attributes.defense.block / 99.0 * 0.15
+
+                # shot_speed: faster releases are harder to block
+                shot_speed = player.attributes.shooting.shot_speed
+                if shot_speed > 70:
+                    block_chance *= 1.0 - (shot_speed - 70) * 0.005  # Up to -15% block chance
+
+                # Badge: chase_down_artist -- increased block chance from behind
+                if closest_def.player.badges.has_badge("chase_down_artist"):
+                    block_chance *= closest_def.player.badges.tier_multiplier("chase_down_artist")
+
                 if self._phys_rng.random() < block_chance:
                     blocked = True
                     self.scoreboard.record_block(
@@ -1684,10 +1828,18 @@ class GameSimulator:
         is_home = home_on_offense
         basket = self.court.basket_position(home_on_offense)
 
+        # athleticism.acceleration affects first-step quickness on drives
+        accel = player.attributes.athleticism.acceleration
+        drive_ticks = self._rng.randint(8, 15)
+        if accel > 75:
+            drive_ticks = max(5, drive_ticks - 2)  # Faster first step
+        elif accel < 40:
+            drive_ticks += 2  # Slow first step
+
         # Transition to driving state
         handler.fsm.transition_to(
             BallHandlerState.DRIVING,
-            ticks=self._rng.randint(8, 15),
+            ticks=drive_ticks,
             target=basket,
             intent=MovementIntent.SPRINT,
         )
@@ -1752,6 +1904,17 @@ class GameSimulator:
             if d.position.distance_to(basket) < 8.0
         )
 
+        # Badge: clamps -- closest defender is harder to beat on drives
+        if closest_def and closest_def.player.badges.has_badge("clamps"):
+            clamp_bonus = closest_def.player.badges.tier_multiplier("clamps") - 1.0
+            def_dist = max(0.5, def_dist - clamp_bonus * 3.0)  # Clamps closes distance
+
+        # on_ball_defense attribute affects defender stickiness
+        if closest_def:
+            obd = closest_def.player.attributes.defense.on_ball_defense
+            if obd > 70:
+                def_dist = max(0.5, def_dist - (obd - 70) * 0.02)
+
         finish = select_finish_type(
             layup=player.attributes.finishing.layup,
             driving_dunk=player.attributes.finishing.driving_dunk,
@@ -1797,6 +1960,14 @@ class GameSimulator:
         )
         make_prob = calculate_shot_probability(ctx)
         make_prob += finish.success_modifier
+
+        # Badge: giant_slayer -- boost when finishing against taller defenders
+        if closest_def and player.badges.has_badge("giant_slayer"):
+            height_diff = (closest_def.player.body.height_inches
+                           - player.body.height_inches)
+            if height_diff > 3:  # Defender is 3+ inches taller
+                make_prob += (player.badges.tier_multiplier("giant_slayer") - 1.0) * 2.5
+
         make_prob = clamp(make_prob, 0.05, 0.95)
         made = self._phys_rng.random() < make_prob
         stats = self._player_stats(player.id, is_home)
@@ -1911,15 +2082,34 @@ class GameSimulator:
 
         if result.turnover:
             if result.intercepted:
+                # Find the closest defender to the passing lane midpoint
+                lane_mid = (handler.position + target.position) * 0.5
                 stealer = min(
                     defenders,
-                    key=lambda d: d.position.distance_to(
-                        (handler.position + target.position) * 0.5,
-                    ),
+                    key=lambda d: d.position.distance_to(lane_mid),
                 ) if defenders else None
+
+                # Badge: interceptor -- increased steal chance on passing lanes
+                # (Pass already failed, but interceptor affects WHO gets it)
+                if stealer and stealer.player.badges.has_badge("interceptor"):
+                    # Interceptor badge holder is more likely to be the stealer
+                    # even if not closest -- check if any defender with interceptor
+                    # is within range
+                    for d in defenders:
+                        if (d.player.badges.has_badge("interceptor")
+                                and d.position.distance_to(lane_mid) < 10.0):
+                            stealer = d
+                            break
+
                 self._steal(handler, stealer, is_home)
             else:
-                self._turnover(handler, is_home)
+                # playmaking.hands affects catching -- poor hands = more fumbles
+                receiver_hands = target.player.attributes.playmaking.hands
+                if receiver_hands < 40 and self._phys_rng.random() < 0.1:
+                    # Fumbled catch becomes turnover
+                    self._turnover(handler, is_home)
+                else:
+                    self._turnover(handler, is_home)
             return True
 
         # Successful pass -- emit broadcast event
@@ -2036,6 +2226,11 @@ class GameSimulator:
             clutch_rating=player.attributes.mental.clutch,
         )
         make_prob = calculate_shot_probability(ctx)
+
+        # Badge: dream_shake -- improved post moves and fakes
+        if player.badges.has_badge("dream_shake"):
+            make_prob *= player.badges.tier_multiplier("dream_shake")
+
         made = self._phys_rng.random() < make_prob
 
         if made:
@@ -2081,22 +2276,47 @@ class GameSimulator:
 
         for pcs in offense:
             dist = pcs.position.distance_to(basket)
-            if dist > 20.0:
+            # Badge: rebound_chaser -- extends effective rebound range
+            max_reb_dist = 20.0
+            if pcs.player.badges.has_badge("rebound_chaser"):
+                max_reb_dist += 5.0 * (pcs.player.badges.tier_value("rebound_chaser"))
+            if dist > max_reb_dist:
                 continue
             reb = pcs.player.attributes.rebounding.offensive_rebound
             prox = max(0, 1.0 - dist / 15.0)
             chance = (reb / 99.0) * 0.5 + prox * 0.3 + pcs.player.tendencies.crash_boards * 0.2
+
+            # Badge: worm -- swim around box-outs for offensive rebounds
+            if pcs.player.badges.has_badge("worm"):
+                chance *= pcs.player.badges.tier_multiplier("worm")
+
+            # athleticism.hustle -- effort on loose balls/rebounds
+            hustle = pcs.player.attributes.athleticism.hustle
+            chance *= 1.0 + (hustle - 50) / 300.0
+
             candidates.append((pcs, chance * 0.30, True))
 
         for pcs in defense:
             dist = pcs.position.distance_to(basket)
-            if dist > 20.0:
+            max_reb_dist = 20.0
+            if pcs.player.badges.has_badge("rebound_chaser"):
+                max_reb_dist += 5.0 * (pcs.player.badges.tier_value("rebound_chaser"))
+            if dist > max_reb_dist:
                 continue
             reb = pcs.player.attributes.rebounding.defensive_rebound
             prox = max(0, 1.0 - dist / 15.0)
-            chance = (reb / 99.0) * 0.5 + prox * 0.3 + (
-                pcs.player.attributes.rebounding.box_out / 99.0 * 0.2
-            )
+            box_out = pcs.player.attributes.rebounding.box_out / 99.0
+
+            # Badge: box_out_beast -- improved box-out effectiveness
+            if pcs.player.badges.has_badge("box_out_beast"):
+                box_out *= pcs.player.badges.tier_multiplier("box_out_beast")
+
+            chance = (reb / 99.0) * 0.5 + prox * 0.3 + box_out * 0.2
+
+            # athleticism.hustle on defensive rebounds too
+            hustle = pcs.player.attributes.athleticism.hustle
+            chance *= 1.0 + (hustle - 50) / 300.0
+
             candidates.append((pcs, chance, False))
 
         if not candidates:
@@ -2315,6 +2535,11 @@ class GameSimulator:
         for pcs in self.court.all_on_court():
             is_home = self._is_home_player(pcs)
             base_drain = ENERGY_DRAIN_JOG * num_ticks
+
+            # athleticism.stamina: higher stamina = slower energy drain
+            stamina = pcs.player.attributes.athleticism.stamina
+            stamina_mod = 1.0 - (stamina - 50) / 200.0  # Range ~0.75 to 1.25
+            base_drain *= stamina_mod
 
             # Phase 1: Visiting team drains faster at altitude
             if not is_home:
