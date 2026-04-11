@@ -11,6 +11,7 @@ from typing import List, Optional
 
 from hoops_sim.narration.events import (
     BaseNarrationEvent,
+    BlockEvent,
     FoulEvent,
     MomentumEvent,
     MomentumKind,
@@ -80,7 +81,11 @@ class ColorCommentaryNarrator:
         return choice
 
     def should_interject(self, event: BaseNarrationEvent) -> bool:
-        """Decide whether to add color commentary for this event."""
+        """Decide whether to add color commentary for this event.
+
+        In text-only mode, color commentary is essential for atmosphere.
+        Interjects frequently with tactical, statistical, and narrative insight.
+        """
         # Always comment on timeouts, quarter events, big plays
         if event.event_type in (
             NarrationEventType.TIMEOUT,
@@ -89,23 +94,37 @@ class ColorCommentaryNarrator:
         ):
             return True
 
-        # Comment on made shots with context
+        # Comment on made shots -- more liberally in text-only mode
         if event.event_type == NarrationEventType.SHOT_RESULT:
             shot = event  # type: ignore[assignment]
             if isinstance(shot, ShotResultEvent):
                 if shot.made:
                     pstats = self.stats.get_player(shot.shooter_id, shot.shooter_name)
-                    # Comment if player is hot, hit milestone, or it's a big play
-                    if pstats.is_hot or pstats.next_milestone or pstats.points >= 25:
+                    # Comment if player is hot, hit milestone, or scoring well
+                    if pstats.is_hot or pstats.next_milestone or pstats.points >= 15:
                         return True
+                    # Comment on threes and dunks (exciting plays)
+                    if shot.is_three or shot.is_dunk:
+                        return self.rng.random() < 0.6
+                    # General shot commentary ~40% of the time
+                    if self.rng.random() < 0.4:
+                        return True
+
+        # Comment on turnovers and steals
+        if event.event_type == NarrationEventType.TURNOVER:
+            return self.rng.random() < 0.5
+
+        # Comment on blocks
+        if event.event_type == NarrationEventType.BLOCK:
+            return True
 
         # Comment on foul trouble
         if event.event_type == NarrationEventType.FOUL:
             if isinstance(event, FoulEvent) and event.is_foul_trouble:
                 return True
 
-        # Cooldown-based: comment roughly every 3-5 possessions
-        if self._cooldown >= 3 and self.rng.random() < 0.5:
+        # Frequent cooldown-based interjections for atmosphere
+        if self._cooldown >= 2 and self.rng.random() < 0.6:
             self._cooldown = 0
             return True
 
@@ -142,13 +161,18 @@ class ColorCommentaryNarrator:
         """Generate commentary specific to an event type."""
         if isinstance(event, ShotResultEvent) and event.made:
             return self._shot_context(event)
+        if isinstance(event, ShotResultEvent) and not event.made:
+            return self._miss_context(event)
         if isinstance(event, TimeoutEvent):
             return self._timeout_context(event)
         if isinstance(event, FoulEvent) and event.is_foul_trouble:
             return self._foul_context(event)
         if isinstance(event, MomentumEvent):
             return self._momentum_context(event)
-        return None
+        if isinstance(event, TurnoverEvent):
+            return self._turnover_context(event)
+        # General tactical observation as fallback
+        return self._general_observation()
 
     def _shot_context(self, event: ShotResultEvent) -> Optional[str]:
         """Provide context after a made shot."""
@@ -209,6 +233,46 @@ class ColorCommentaryNarrator:
             tmpl = self._pick_template(TIE_GAME_TEMPLATES)
             return tmpl
         return None
+
+    def _miss_context(self, event: ShotResultEvent) -> Optional[str]:
+        """Provide context after a missed shot."""
+        pstats = self.stats.get_player(event.shooter_id, event.shooter_name)
+        if pstats.consecutive_misses >= 3:
+            tmpl = self._pick_template(COLD_PLAYER_TEMPLATES)
+            return tmpl.format(player=event.shooter_name)
+        return None
+
+    def _turnover_context(self, event: TurnoverEvent) -> Optional[str]:
+        """Provide context after a turnover."""
+        templates = [
+            "You can't give the ball away like that.",
+            "That's a costly turnover. You have to take care of the basketball.",
+            "Sloppy play there. They'll want that one back.",
+            "The defense forced that one. Good pressure.",
+        ]
+        return self._pick_template(templates)
+
+    def _general_observation(self) -> Optional[str]:
+        """Generate a general tactical or atmospheric observation.
+
+        Uses the existing tactical templates that were never connected.
+        """
+        all_pools = [
+            DEFENSIVE_SCHEME_TEMPLATES,
+            STAT_INSIGHT_TEMPLATES,
+        ]
+        # Pick a random pool and a random template
+        pool = self.rng.choice(all_pools)
+        tmpl = self._pick_template(pool)
+        # These templates have format fields we may not have data for,
+        # so we use safe formatting
+        try:
+            return tmpl.format(
+                player="", team="", pct="", points="",
+                shots="", made="", attempted="",
+            )
+        except (KeyError, IndexError):
+            return tmpl
 
     def _arc_commentary(
         self, arc_type: ArcType, subject: str, intensity: float,

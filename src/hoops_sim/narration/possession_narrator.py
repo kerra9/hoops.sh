@@ -203,21 +203,36 @@ class PossessionNarrator:
             ]
 
             # Compose setup events into flowing prose
+            setup_text = ""
             if setup_events:
-                composed = self.chain_composer.compose(
+                setup_text = self.chain_composer.compose(
                     setup_events, verbosity=verbosity,
                 )
-                if composed:
-                    narration.add_pbp(composed)
 
-            # Terminal events still rendered individually
+            # Terminal events rendered and joined with setup prose
             for event in terminal_events:
-                pbp_text = self.pbp.narrate(event)
-                narration.add_pbp(pbp_text or "")
+                pbp_text = self.pbp.narrate(event) or ""
+
+                # Join setup prose with the first terminal event into one
+                # flowing sentence (e.g. "hesi... crossover -- pulls up...
+                # BANG!") instead of separate broadcast lines.
+                if setup_text and pbp_text:
+                    joined = f"{setup_text}\n{pbp_text}"
+                    narration.add_pbp(joined)
+                    setup_text = ""  # Only join with first terminal
+                elif setup_text:
+                    narration.add_pbp(setup_text)
+                    setup_text = ""
+                elif pbp_text:
+                    narration.add_pbp(pbp_text)
 
                 if self.color.should_interject(event):
                     color_text = self.color.generate(event, arc_snapshot)
                     narration.add_color(color_text or "")
+
+            # If there were setup events but no terminal, still emit them
+            if setup_text:
+                narration.add_pbp(setup_text)
         else:
             # Fallback: render each event individually (original behavior)
             for event in significant:
@@ -233,8 +248,9 @@ class PossessionNarrator:
     def _filter_significant_events(self) -> List[BaseNarrationEvent]:
         """Filter events using importance scoring instead of hard caps.
 
-        All events above the importance threshold (0.3) are kept.
-        Ball advance events are suppressed when better setup events exist.
+        In text-only mode, we keep nearly everything -- the narration IS the
+        game. Threshold is low (0.15) and ball advance events are always kept
+        because they set the scene for the possession.
         """
         if not self._current_events:
             return []
@@ -244,20 +260,9 @@ class PossessionNarrator:
             for event in self._current_events
         ]
 
-        # Keep everything above threshold
-        threshold = 0.3
-        kept = [event for event, score in scored if score > threshold]
-
-        # Suppress ball advance if there are other setup events
-        has_other_setup = any(
-            e.event_type in _SETUP_TYPES and e.event_type != NarrationEventType.BALL_ADVANCE
-            for e in kept
-        )
-        if has_other_setup:
-            kept = [
-                e for e in kept
-                if e.event_type != NarrationEventType.BALL_ADVANCE
-            ]
+        # Low threshold: text-only game needs to describe everything
+        threshold = 0.15
+        kept = [event for event, score in scored if score >= threshold]
 
         return kept
 

@@ -14,12 +14,15 @@ from hoops_sim.narration.events import (
     BallAdvanceEvent,
     BaseNarrationEvent,
     BlockEvent,
+    CrowdReactionEvent,
+    DefensiveEvent,
     DribbleMoveEvent,
     DriveEvent,
     FoulEvent,
     FreeThrowEvent,
     MomentumEvent,
     NarrationEventType,
+    OffBallEvent,
     PassEvent,
     PossessionStartEvent,
     QuarterBoundaryEvent,
@@ -341,7 +344,16 @@ class PlayByPlayNarrator:
                     score=event.new_score_home,
                 ))
             elif event.lead and event.lead != 0:
-                parts.append(f"{event.team_name} {event.new_score_home}-{event.new_score_away}.")
+                tmpl = self._pick_template(SCORE_UPDATE_TEMPLATES)
+                parts.append(tmpl.format(
+                    team=event.team_name,
+                    score=f"{event.new_score_home}-{event.new_score_away}",
+                    lead=abs(event.lead),
+                    home_team="",
+                    away_team="",
+                    home_score=event.new_score_home,
+                    away_score=event.new_score_away,
+                ))
         else:
             # Missed shot
             if event.is_three:
@@ -458,6 +470,81 @@ class PlayByPlayNarrator:
     def _narrate_momentum(self, event: MomentumEvent) -> Optional[str]:
         return None  # Handled by color commentary
 
+    def _narrate_off_ball(self, event: OffBallEvent) -> Optional[str]:
+        """Narrate off-ball offensive actions to paint the full picture."""
+        templates = {
+            "cut": [
+                f"{event.player_name} cuts hard to the basket.",
+                f"{event.player_name} makes a backdoor cut!",
+                f"{event.player_name} slices through the lane.",
+            ],
+            "spot_up": [
+                f"{event.player_name} spaces to the wing.",
+                f"{event.player_name} relocates to the corner.",
+            ],
+            "relocate": [
+                f"{event.player_name} drifts to an open spot.",
+                f"{event.player_name} finds space on the perimeter.",
+            ],
+            "set_screen": [
+                f"{event.player_name} sets a screen away from the ball.",
+                f"{event.player_name} sets a pin-down for his teammate.",
+            ],
+        }
+        kind_key = event.action_kind.value if hasattr(event.action_kind, "value") else str(event.action_kind)
+        pool = templates.get(kind_key, [f"{event.player_name} moves off the ball."])
+        return self._pick_template(pool)
+
+    def _narrate_defensive(self, event: DefensiveEvent) -> Optional[str]:
+        """Narrate defensive actions for a complete picture."""
+        templates = {
+            "closeout": [
+                f"{event.player_name} closes out hard on the shooter!",
+                f"{event.player_name} flies out to contest!",
+            ],
+            "help_rotation": [
+                f"{event.player_name} rotates over from the weak side.",
+                f"Here comes the help from {event.player_name}!",
+            ],
+            "switch": [
+                f"They switch it. {event.player_name} picks up the new man.",
+            ],
+            "deny": [
+                f"{event.player_name} denies the entry pass.",
+                f"{event.player_name} plays tight, takes away the passing lane.",
+            ],
+        }
+        kind_key = event.action_kind.value if hasattr(event.action_kind, "value") else str(event.action_kind)
+        pool = templates.get(kind_key, [f"{event.player_name} makes a defensive play."])
+        return self._pick_template(pool)
+
+    def _narrate_crowd(self, event: CrowdReactionEvent) -> Optional[str]:
+        """Narrate crowd/arena atmosphere."""
+        templates = {
+            "erupts": [
+                "The crowd erupts!",
+                "The arena is going crazy!",
+                "Listen to this crowd! They are LOUD!",
+                "The fans are on their feet!",
+            ],
+            "silenced": [
+                "That quiets the crowd.",
+                "You could hear a pin drop in this arena.",
+                "The home crowd goes silent.",
+            ],
+            "building": [
+                "The crowd is starting to sense something here.",
+                "You can feel the energy building in this building.",
+                "The fans are getting into it now.",
+            ],
+            "bench_erupts": [
+                "The bench is going wild!",
+                "Look at the bench reaction! They love it!",
+            ],
+        }
+        pool = templates.get(event.reaction_type, ["The crowd reacts."])
+        return self._pick_template(pool)
+
     # Handler dispatch table
     _HANDLERS = {
         NarrationEventType.POSSESSION_START: _narrate_possession_start,
@@ -476,4 +563,7 @@ class PlayByPlayNarrator:
         NarrationEventType.TIMEOUT: _narrate_timeout,
         NarrationEventType.QUARTER_EVENT: _narrate_quarter,
         NarrationEventType.MOMENTUM: _narrate_momentum,
+        NarrationEventType.OFF_BALL_ACTION: _narrate_off_ball,
+        NarrationEventType.DEFENSIVE_ACTION: _narrate_defensive,
+        NarrationEventType.CROWD_REACTION: _narrate_crowd,
     }

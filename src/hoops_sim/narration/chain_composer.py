@@ -158,13 +158,18 @@ class ChainComposer:
             if i == 0:
                 parts.append(rendered)
             else:
-                # Join clusters with transitional connectors
-                connector = self._pick_fragment(TRANSITION_CONNECTORS)
-                # Use ellipsis between major action changes
-                if clusters[i - 1].cluster_type != cluster.cluster_type:
-                    parts.append(f"... {rendered}")
+                # Vary joiners for natural rhythm instead of always ellipsis
+                prev_type = clusters[i - 1].cluster_type
+                if prev_type != cluster.cluster_type:
+                    # Different action types: randomize between joiners
+                    joiner = self.rng.choice([
+                        "... ", " -- ", ". ", ", ",
+                    ])
+                    parts.append(f"{joiner}{rendered}")
                 else:
-                    parts.append(f", {connector} {rendered}")
+                    connector = self._pick_fragment(TRANSITION_CONNECTORS)
+                    joiner = self.rng.choice([", ", "... "])
+                    parts.append(f"{joiner}{connector} {rendered}")
 
         return "".join(parts)
 
