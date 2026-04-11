@@ -1,9 +1,12 @@
 """Scrolling narration log consuming NarrationEvent objects.
 
 Textual widget using RichLog for auto-scrolling, color-coded play-by-play.
+Supports copying the entire game log to clipboard.
 """
 
 from __future__ import annotations
+
+from typing import List
 
 from rich.text import Text
 from textual.app import ComposeResult
@@ -50,8 +53,13 @@ class PlayByPlayWidget(Widget):
     """Scrolling narration log for play-by-play text.
 
     Uses Textual's RichLog widget for auto-scrolling with the ability
-    to scroll back, and color-coded event lines.
+    to scroll back, and color-coded event lines. Maintains an internal
+    plain-text log for clipboard copy support.
     """
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self._game_log: List[str] = []
 
     def compose(self) -> ComposeResult:
         yield RichLog(highlight=True, markup=True, id="pbp-log")
@@ -68,6 +76,7 @@ class PlayByPlayWidget(Widget):
         else:
             styled = Text(f"\u2022 {event.text}", style=color)
         self.log.write(styled)
+        self._game_log.append(event.text)
 
     def add_text(
         self, text: str, intensity: NarrationIntensity = NarrationIntensity.MEDIUM
@@ -75,9 +84,45 @@ class PlayByPlayWidget(Widget):
         """Add raw text to the play-by-play log."""
         self.add_event(NarrationEvent(text=text, intensity=intensity))
 
+    def get_full_log(self) -> str:
+        """Return the entire game log as a plain-text string."""
+        return "\n".join(self._game_log)
+
+    def copy_to_clipboard(self) -> int:
+        """Copy the full game log to the system clipboard.
+
+        Returns the number of lines copied.
+        """
+        import subprocess
+
+        log_text = self.get_full_log()
+        if not log_text:
+            return 0
+
+        # Try platform-appropriate clipboard commands
+        for cmd in ("pbcopy", "xclip -selection clipboard", "xsel --clipboard --input", "wl-copy"):
+            parts = cmd.split()
+            try:
+                proc = subprocess.run(
+                    parts,
+                    input=log_text.encode(),
+                    capture_output=True,
+                    timeout=3,
+                )
+                if proc.returncode == 0:
+                    return len(self._game_log)
+            except (FileNotFoundError, subprocess.TimeoutExpired):
+                continue
+
+        # Fallback: write to a file in the current directory
+        with open("game_log.txt", "w") as f:
+            f.write(log_text)
+        return len(self._game_log)
+
     def clear(self) -> None:
         """Clear the play-by-play log."""
         self.log.clear()
+        self._game_log.clear()
 
 
 # Keep backward-compatible alias
