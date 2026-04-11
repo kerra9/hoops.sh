@@ -101,7 +101,7 @@ from hoops_sim.narration.possession_narrator import PossessionNarrator
 from hoops_sim.narration.segments import BroadcastSegments
 from hoops_sim.narration.stat_tracker import LiveStatTracker
 from hoops_sim.physics.kinematics import MovementType
-from hoops_sim.physics.vec import Vec2
+from hoops_sim.physics.vec import Vec2, Vec3
 from hoops_sim.plays.playbook import (
     FAST_BREAK,
     ISOLATION,
@@ -114,11 +114,28 @@ from hoops_sim.psychology.confidence import ConfidenceTracker
 from hoops_sim.psychology.momentum import MomentumTracker
 from hoops_sim.shot.probability import ShotContext, calculate_shot_probability
 from hoops_sim.utils.constants import (
+    BANK_SHOT_CLOSE_CHANCE,
+    BANK_SHOT_DISTANCE_THRESHOLD,
+    BANK_SHOT_FAR_CHANCE,
+    BLOCK_BASE_CHANCE,
+    BLOCK_RATING_THRESHOLD,
     COURT_LENGTH,
     COURT_WIDTH,
+    DRIBBLE_MOVE_BEFORE_DRIVE_CHANCE,
+    DRIBBLE_MOVE_BEFORE_SHOT_CHANCE,
+    DRIBBLE_MOVE_BEFORE_SHOT_DISTANCE,
+    DRIVE_KICKOUT_CHANCE,
+    DRIVE_KICKOUT_DISTANCE,
+    DRIVE_TURNOVER_BASE_CHANCE,
+    DRIVE_TURNOVER_SKILL_FACTOR,
+    EARLY_POSSESSION_PASS_BIAS_TICKS,
     ENERGY_DRAIN_JOG,
     ENERGY_DRAIN_SPRINT,
     ENERGY_RECOVERY_BENCH,
+    MAX_REBOUND_DISTANCE,
+    SCREENER_STRENGTH_THRESHOLD,
+    SCREENER_WEIGHT_THRESHOLD,
+    SHOOTER_THREE_POINT_THRESHOLD,
     TICK_DURATION,
 )
 from hoops_sim.utils.math import attribute_to_range, clamp
@@ -127,16 +144,40 @@ from hoops_sim.utils.rng import RNGManager
 # Phase 1-5: Previously-dead subsystem imports
 from hoops_sim.physics.court_surface import CourtSurface, DEFAULT_SURFACE
 
+# Phase 6: Movement module imports (replacing inline movement logic)
+from hoops_sim.movement.off_ball import calculate_spot_up_position, calculate_cut_target, OffBallAction
+from hoops_sim.movement.defensive_movement import (
+    calculate_on_ball_position,
+    calculate_help_position,
+    calculate_closeout_position,
+)
+from hoops_sim.movement.locomotion import choose_movement_type
+
+# Phase 7: Contact detector import
+from hoops_sim.engine.contact_detector import detect_contacts
+
+# Phase 8: Backboard physics import
+from hoops_sim.physics.backboard import check_backboard_hit
+
 # Maximum ticks per possession to prevent infinite loops
 MAX_TICKS_PER_POSSESSION = 300  # 30 seconds
 
 
-class ShotOutcome(enum.Enum):
-    """Outcome of a shot attempt for possession tracking."""
+class PossessionOutcome(enum.Enum):
+    """Outcome of a shot attempt for possession tracking.
+
+    Renamed from ShotOutcome to avoid collision with physics.rim_interaction.ShotOutcome
+    which tracks the physical ball-rim interaction (swish, rattle, airball, etc.).
+    This enum tracks what happens to the POSSESSION after a shot.
+    """
 
     MADE = "made"           # Basket scored -- possession should flip (other team inbounds)
     OFFENSIVE_REBOUND = "oreb"   # Missed + OREB -- same team retains
     DEFENSIVE_REBOUND = "dreb"   # Missed + DREB (or block) -- possession should flip
+
+
+# Backward-compatible alias
+ShotOutcome = PossessionOutcome
 
 
 @dataclass
@@ -300,6 +341,7 @@ class GameSimulator:
         self._last_passer_id: int | None = None
 
         # Micro-action tracking
+        self._last_tick_contacts: list = []  # Phase 7: contact detector results
         self._possession_events: list[PossessionEvent] = []
         self._current_play: PlayDefinition | None = None
         self._pending_screener_id: int | None = None
@@ -522,7 +564,7 @@ class GameSimulator:
         if action.action == "shoot":
             # Execute a dribble move before shooting if defender is close
             def_dist = self.court.defender_distance(player.id, home_on_offense)
-            if def_dist < 5.0 and self._rng.random() < 0.4:
+            if def_dist < DRIBBLE_MOVE_BEFORE_SHOT_DISTANCE and self._rng.random() < DRIBBLE_MOVE_BEFORE_SHOT_CHANCE:
                 self._execute_dribble_move(handler, home_on_offense)
             outcome = self._execute_shot(handler, home_on_offense, catch_and_shoot=False)
             if outcome == ShotOutcome.OFFENSIVE_REBOUND:
@@ -534,7 +576,7 @@ class GameSimulator:
 
         elif action.action == "drive":
             # Execute a dribble move to create space before driving
-            if self._rng.random() < 0.6:
+            if self._rng.random() < DRIBBLE_MOVE_BEFORE_DRIVE_CHANCE:
                 self._execute_dribble_move(handler, home_on_offense)
             resolved = self._execute_drive(handler, home_on_offense)
             if resolved:
@@ -586,7 +628,10 @@ class GameSimulator:
             return False
 
     def _tick_all_players(self, home_on_offense: bool) -> None:
-        """Advance all 10 player FSMs by one tick and update positions."""
+        """Advance all 10 player FSMs by one tick and update positions.
+
+        Phase 7: Now runs contact detection after position updates.
+        """
         for pcs in self.court.all_on_court():
             # Tick the FSM
             pcs.fsm.tick()
@@ -620,6 +665,26 @@ class GameSimulator:
         for pcs in defense:
             if pcs.fsm.is_complete:
                 self._decide_defensive_action(pcs, home_on_offense, basket)
+
+        # Phase 7: Contact detection after all positions updated
+        offense_states = [
+            (p.player_id, p.position, p.fsm)
+            for p in self.court.offensive_players(home_on_offense)
+        ]
+        defense_states = [
+            (p.player_id, p.position, p.fsm)
+            for p in self.court.defensive_players(home_on_offense)
+        ]
+        bh = self.court.ball_handler()
+        contacts = detect_contacts(
+            offense_states=offense_states,
+            defense_states=defense_states,
+            ball_handler_id=bh.player_id if bh else None,
+            basket_position=basket,
+            rng=self._phys_rng,
+        )
+        # Store contacts for foul processing by the caller
+        self._last_tick_contacts = contacts
 
     def _decide_off_ball_action(
         self, pcs: PlayerCourtState, home_on_offense: bool, basket: Vec2,
@@ -752,15 +817,19 @@ class GameSimulator:
             return
 
         # If assignment has the ball, guard on-ball
+        # Phase 6: Use movement.defensive_movement for positioning
         if ball_handler and assignment.player_id == ball_handler.player_id:
-            to_basket = (basket - assignment.position).normalized()
             # defensive_iq: smarter defenders guard tighter
             gap = 3.0
             if def_iq > 70:
-                gap = 2.5  # Tighter coverage
+                gap = 2.5
             elif def_iq < 40:
-                gap = 4.0  # Loose coverage
-            guard_pos = assignment.position + to_basket * gap
+                gap = 4.0
+            guard_pos = calculate_on_ball_position(
+                offensive_player_pos=assignment.position,
+                basket_position=basket,
+                gap=gap,
+            )
             pcs.fsm.transition_to(
                 DefenderState.GUARDING_ON_BALL,
                 ticks=self._rng.randint(3, 10),
@@ -769,11 +838,14 @@ class GameSimulator:
             )
         else:
             # Off-ball: deny position between assignment and basket
-            to_basket = (basket - assignment.position).normalized()
-            deny_pos = assignment.position + to_basket * 3.0
+            deny_pos = calculate_on_ball_position(
+                offensive_player_pos=assignment.position,
+                basket_position=basket,
+                gap=3.0,
+            )
             if ball_handler:
                 to_ball = (ball_handler.position - assignment.position).normalized()
-                deny_pos = assignment.position + to_basket * 2.5 + to_ball * 1.0
+                deny_pos = deny_pos + to_ball * 1.0
             pcs.fsm.transition_to(
                 DefenderState.DENYING_PASS,
                 ticks=self._rng.randint(5, 20),
@@ -1140,18 +1212,20 @@ class GameSimulator:
     def _find_spot_up_position(
         self, pcs: PlayerCourtState, home_on_offense: bool,
     ) -> Vec2:
-        """Find a good spot-up position for spacing."""
-        basket = self.court.basket_position(home_on_offense)
-        direction = pcs.position - basket
-        if direction.magnitude() < 0.1:
-            direction = Vec2(1.0, 0.0)
-        direction = direction.normalized()
+        """Find a good spot-up position for spacing.
 
-        if pcs.player.attributes.shooting.three_point > 65:
-            # Spot up on the arc
-            return basket + direction * 24.0
-        else:
-            return basket + direction * 14.0
+        Phase 6: Now delegates to movement.off_ball.calculate_spot_up_position.
+        """
+        basket = self.court.basket_position(home_on_offense)
+        ball_handler = self.court.ball_handler()
+        ball_pos = ball_handler.position if ball_handler else basket
+        is_shooter = pcs.player.attributes.shooting.three_point > 65
+        return calculate_spot_up_position(
+            ball_position=ball_pos,
+            current_position=pcs.position,
+            basket_position=basket,
+            is_shooter=is_shooter,
+        )
 
     # -- Player AI ------------------------------------------------------------
 
@@ -1808,6 +1882,33 @@ class GameSimulator:
                     **self._make_base_fields(),
                 ))
 
+            # Phase 8: Backboard physics -- check if the miss hits the backboard
+            # Approximate ball trajectory for backboard check
+            attacking_right = self.court.attacking_right(home_on_offense)
+            ball_pos_3d = Vec3(handler.position.x, handler.position.y, 10.0)
+            to_basket_3d = Vec3(basket.x - handler.position.x,
+                                basket.y - handler.position.y, 0.0)
+            backboard_hit = check_backboard_hit(
+                ball_position=ball_pos_3d,
+                ball_velocity=to_basket_3d,
+                attacking_right=attacking_right,
+            )
+            if backboard_hit.hit:
+                # Bank shot chance: backboard contact may redirect the ball in
+                bank_chance = 0.15 if dist < 15.0 else 0.05
+                if self._phys_rng.random() < bank_chance:
+                    # Bank shot goes in! Record as made basket
+                    self.scoreboard.record_basket(
+                        player_id=player.id,
+                        player_name=player.full_name,
+                        is_home=is_home,
+                        points=points,
+                        is_three=is_three,
+                    )
+                    handler.fsm.defender_separation = 3.0
+                    handler.fsm.reset_combo()
+                    return ShotOutcome.MADE
+
             # Rebound -- check if offense retained possession
             oreb = self._resolve_rebound(home_on_offense)
 
@@ -1879,7 +1980,7 @@ class GameSimulator:
             return True
 
         # Turnover chance
-        to_chance = 0.07 + (1.0 - player.attributes.playmaking.ball_handle / 99.0) * 0.07
+        to_chance = DRIVE_TURNOVER_BASE_CHANCE + (1.0 - player.attributes.playmaking.ball_handle / 99.0) * DRIVE_TURNOVER_SKILL_FACTOR
         if self._phys_rng.random() < to_chance:
             self._turnover(handler, is_home)
             return True
