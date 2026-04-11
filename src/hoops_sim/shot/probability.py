@@ -55,8 +55,11 @@ def calculate_shot_probability(ctx: ShotContext) -> float:
     Returns:
         Probability from 0.0 to 1.0.
     """
-    # Factor 1: Base rating (most important factor)
-    base = ctx.base_rating / 100.0
+    # Factor 1: Base rating -- S-curve calibration
+    # Old: base_rating / 100.0 (80-rated = 80% base -- way too high)
+    # New: S-curve producing realistic base probabilities:
+    #   50-rated -> ~35%, 70 -> ~43%, 80 -> ~48%, 99 -> ~58%
+    base = 0.28 + (ctx.base_rating / 99.0) ** 1.5 * 0.30
 
     # Factor 2: Distance decay (further = harder)
     if ctx.shot_distance <= 4.0:
@@ -67,8 +70,8 @@ def calculate_shot_probability(ctx: ShotContext) -> float:
         distance_mod = 0.91 - (ctx.shot_distance - 15.0) * 0.005
     distance_mod = max(0.6, distance_mod)
 
-    # Factor 3: Contest penalty
-    contest_penalty = 1.0 - ctx.contest_quality * 0.35
+    # Factor 3: Contest penalty (increased from 0.35 to 0.50 for realism)
+    contest_penalty = 1.0 - ctx.contest_quality * 0.50
     # Deadeye badge reduces contest penalty
     if ctx.deadeye_tier > 0:
         badge_reduction = ctx.deadeye_tier * 0.03
@@ -82,8 +85,8 @@ def calculate_shot_probability(ctx: ShotContext) -> float:
     if ctx.is_catch_and_shoot:
         cas_bonus = 1.03 + ctx.catch_and_shoot_tier * 0.01
 
-    # Factor 6: Off-dribble penalty
-    dribble_mod = 0.92 if ctx.is_off_dribble else 1.0
+    # Factor 6: Off-dribble penalty (increased from 0.92 to 0.85 for realism)
+    dribble_mod = 0.85 if ctx.is_off_dribble else 1.0
 
     # Factor 7: Hot/cold streak
     streak_mod = 1.0 + ctx.hot_cold_modifier
