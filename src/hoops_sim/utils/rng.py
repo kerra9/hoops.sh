@@ -58,9 +58,14 @@ class SeededRNG:
         """Create a child RNG with a deterministic seed derived from this one.
 
         This ensures that each subsystem gets its own independent stream while
-        still being fully reproducible from the parent seed.
+        still being fully reproducible from the parent seed. The label is mixed
+        into the seed so that different subsystems get distinct streams even if
+        forked at the same parent state.
         """
-        child_seed = self._rng.randint(0, 2**63)
+        base_seed = self._rng.randint(0, 2**63)
+        # Mix the label into the seed for deterministic, label-dependent forking
+        label_hash = hash(label) & 0xFFFFFFFFFFFFFFFF
+        child_seed = base_seed ^ label_hash
         return SeededRNG(seed=child_seed)
 
 

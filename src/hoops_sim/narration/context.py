@@ -46,7 +46,7 @@ class PlayerGameContext:
     consecutive_makes: int = 0
     consecutive_misses: int = 0
     assists: int = 0
-    announced_milestones: set = field(default_factory=set)
+    announced_milestones: set[int] = field(default_factory=set)
 
     def on_made_shot(self, points: int, is_three: bool) -> None:
         self.points += points

@@ -52,7 +52,7 @@ class InjurySeverity(enum.Enum):
 
 
 # Recovery time ranges in games
-INJURY_RECOVERY: dict = {
+INJURY_RECOVERY: dict[InjuryType, tuple[int, int]] = {
     InjuryType.ANKLE_SPRAIN: (1, 4),
     InjuryType.KNEE_CONTUSION: (1, 3),
     InjuryType.HIP_CONTUSION: (1, 3),

@@ -114,7 +114,7 @@ def select_finish_type(
         standing_dunk: Player's standing dunk rating.
         acrobatic_finish: Player's acrobatic finish rating.
         post_hook: Player's post hook rating.
-        vertical: Player's vertical leap.
+        vertical_leap: Player's vertical leap.
         speed: Player's speed rating.
         defender_distance: Distance to nearest defender.
         rim_protector_present: Whether a rim protector is nearby.
@@ -180,9 +180,7 @@ def select_finish_type(
         finger_score = acrobatic_finish / 99.0 * 0.85
         candidates.append((FinishType.FINGER_ROLL, finger_score))
 
-    if not candidates:
-        candidates.append((FinishType.LAYUP, 0.5))
-
+    # Note: candidates always has at least the LAYUP entry from above.
     # Add noise and pick the best
     scored = [(ft, score + rng.gauss(0, 0.08)) for ft, score in candidates]
     best_type, best_score = max(scored, key=lambda x: x[1])

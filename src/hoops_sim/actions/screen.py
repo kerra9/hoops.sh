@@ -8,7 +8,7 @@ depends on the screener's size, strength, and positioning.
 from __future__ import annotations
 
 import enum
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from hoops_sim.physics.vec import Vec2
 from hoops_sim.utils.rng import SeededRNG
@@ -35,11 +35,7 @@ class ScreenResult:
     is_legal: bool = True  # Whether the screen was legal (not moving)
     moving_screen_called: bool = False
     separation_created: float = 0.0  # Feet of separation for the user
-    screener_position: Vec2 = None  # type: ignore[assignment]
-
-    def __post_init__(self) -> None:
-        if self.screener_position is None:
-            self.screener_position = Vec2(0.0, 0.0)
+    screener_position: Vec2 = field(default_factory=lambda: Vec2(0.0, 0.0))
 
 
 def evaluate_screen(

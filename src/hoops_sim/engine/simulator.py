@@ -389,6 +389,7 @@ class GameSimulator:
             # Advance game clock
             self._advance_clock(TICK_DURATION)
             if self._check_quarter_end():
+                self._flush_broadcast_lines()
                 return
 
             # Check shot clock
@@ -418,7 +419,10 @@ class GameSimulator:
         if not possession_resolved:
             handler = self._get_ball_handler(home_on_offense)
             if handler:
-                self._execute_shot(handler, home_on_offense, catch_and_shoot=False)
+                offense_retained = self._execute_shot(handler, home_on_offense, catch_and_shoot=False)
+                if offense_retained:
+                    # Offensive rebound on forced shot -- still end (avoid infinite loop)
+                    pass
             self._end_possession_and_flip()
 
     def _process_ball_handler_tick(
@@ -475,9 +479,12 @@ class GameSimulator:
             def_dist = self.court.defender_distance(player.id, home_on_offense)
             if def_dist < 5.0 and self._rng.random() < 0.4:
                 self._execute_dribble_move(handler, home_on_offense)
-            self._execute_shot(handler, home_on_offense, catch_and_shoot=False)
-            self._end_possession_and_flip()
-            return True
+            offense_retained = self._execute_shot(handler, home_on_offense, catch_and_shoot=False)
+            if not offense_retained:
+                self._end_possession_and_flip()
+                return True
+            # Offensive rebound: possession continues (don't flip)
+            return False
 
         elif action.action == "drive":
             # Execute a dribble move to create space before driving
@@ -918,10 +925,12 @@ class GameSimulator:
             })
 
     def _advance_clock(self, seconds: float) -> None:
-        """Advance the game clock by the given seconds."""
+        """Advance the game clock by the given seconds.
+
+        Delegates to GameClock.tick() so the is_running guard is respected.
+        """
         gs = self.game_state
-        gs.clock.game_clock = max(0.0, gs.clock.game_clock - seconds)
-        gs.clock.shot_clock = max(0.0, gs.clock.shot_clock - seconds)
+        gs.clock.tick(seconds)
 
     def _check_quarter_end(self) -> bool:
         """Check if the quarter has ended and handle it."""
@@ -1388,8 +1397,12 @@ class GameSimulator:
         handler: PlayerCourtState,
         home_on_offense: bool,
         catch_and_shoot: bool = False,
-    ) -> None:
-        """Execute a shot attempt using the 18-factor shot probability system."""
+    ) -> bool:
+        """Execute a shot attempt using the 18-factor shot probability system.
+
+        Returns True if the offense retains possession (made basket or offensive
+        rebound). Returns False if possession should flip to the other team.
+        """
         gs = self.game_state
         player = handler.player
         is_home = home_on_offense
@@ -1508,6 +1521,7 @@ class GameSimulator:
             # Reset dribble separation
             handler.fsm.defender_separation = 3.0
             handler.fsm.reset_combo()
+            return True  # Made basket: offense retains (inbound)
         else:
             self.scoreboard.record_miss(
                 player_id=player.id,
@@ -1551,11 +1565,12 @@ class GameSimulator:
                     **self._make_base_fields(),
                 ))
 
-            # Rebound
-            self._resolve_rebound(home_on_offense)
+            # Rebound -- check if offense retained possession
+            oreb = self._resolve_rebound(home_on_offense)
 
             handler.fsm.defender_separation = 3.0
             handler.fsm.reset_combo()
+            return oreb  # True if offensive rebound retained possession
 
     def _execute_drive(
         self, handler: PlayerCourtState, home_on_offense: bool,
@@ -1763,7 +1778,7 @@ class GameSimulator:
         result = resolve_pass(
             pass_accuracy=player.attributes.playmaking.pass_accuracy,
             pass_vision=player.attributes.playmaking.pass_vision,
-            receiver_hands=target.player.attributes.rebounding.box_out,  # Using as proxy
+            receiver_hands=target.player.attributes.playmaking.ball_handle,  # Proxy for catching
             pass_type=pass_type,
             distance=dist,
             lane_quality=lane.quality,
@@ -1936,7 +1951,8 @@ class GameSimulator:
 
     # -- Secondary actions ----------------------------------------------------
 
-    def _resolve_rebound(self, home_on_offense: bool) -> None:
+    def _resolve_rebound(self, home_on_offense: bool) -> bool:
+        """Resolve a rebound. Returns True if the offense retained possession (OREB)."""
         offense = self.court.offensive_players(home_on_offense)
         defense = self.court.defensive_players(home_on_offense)
         basket = self.court.basket_position(home_on_offense)
@@ -1963,11 +1979,11 @@ class GameSimulator:
             candidates.append((pcs, chance, False))
 
         if not candidates:
-            return
+            return False
 
         total = sum(c[1] for c in candidates)
         if total <= 0:
-            return
+            return False
 
         roll = self._phys_rng.random() * total
         cumulative = 0.0
@@ -2002,6 +2018,8 @@ class GameSimulator:
             is_offensive=is_oreb,
             **self._make_base_fields(),
         ))
+
+        return is_oreb
 
     def _evaluate_transition_opportunity(
         self, ball_player: PlayerCourtState, home_on_offense: bool, is_steal: bool,
@@ -2086,13 +2104,14 @@ class GameSimulator:
     def _foul_on_drive(self, handler: PlayerCourtState, is_home: bool) -> None:
         closest = self.court.closest_defender_to(handler.position, is_home)
         if closest:
+            # Increment fouls FIRST so all downstream consumers see the correct count
+            closest.fouls += 1
             self.scoreboard.record_foul(
                 fouler_id=closest.player_id,
                 fouler_name=closest.player.full_name,
                 fouler_is_home=not is_home,
                 fouler_personal_fouls=closest.fouls,
             )
-            closest.fouls += 1
             gs = self.game_state
             self._broadcast_event(FoulEvent(
                 fouler_name=closest.player.full_name,

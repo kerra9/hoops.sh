@@ -85,14 +85,14 @@ class EnergyManager:
         if state:
             state.recover(ENERGY_RECOVERY_BENCH * ticks)
 
-    def recover_timeout(self, player_ids: list) -> None:
+    def recover_timeout(self, player_ids: list[int]) -> None:
         """Recover energy during a timeout for players on court."""
         for pid in player_ids:
             state = self.states.get(pid)
             if state:
                 state.recover(ENERGY_RECOVERY_TIMEOUT)
 
-    def recover_halftime(self, player_ids: list) -> None:
+    def recover_halftime(self, player_ids: list[int]) -> None:
         """Recover energy during halftime."""
         for pid in player_ids:
             state = self.states.get(pid)

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import enum
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 
 class NarrationEventType(enum.Enum):
@@ -446,8 +446,6 @@ class CrowdReactionEvent(BaseNarrationEvent):
 
 
 # Union type for all narration events
-from typing import Union
-
 NarrationEventUnion = Union[
     PossessionStartEvent,
     BallAdvanceEvent,

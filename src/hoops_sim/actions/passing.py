@@ -103,9 +103,14 @@ def resolve_pass(
         catch_diff = max(0.0, 1.0 - receiver_hands / 100.0) * 0.5
         return PassResult(completed=True, receiver_catch_difficulty=catch_diff)
     else:
-        # Pass failed
+        # Pass failed -- not every failed pass is a turnover.
+        # Interception: tight lane + bad luck
         if lane_quality < 0.4 and rng.random() < 0.4:
             return PassResult(completed=False, intercepted=True, turnover=True)
+        # Deflection: may or may not be recovered by the offense
         if rng.random() < 0.3:
-            return PassResult(completed=False, deflected=True, turnover=True)
-        return PassResult(completed=False, turnover=True)
+            deflection_turnover = rng.random() < 0.6  # 60% of deflections are turnovers
+            return PassResult(completed=False, deflected=True, turnover=deflection_turnover)
+        # Errant pass: out of bounds or bad throw -- offense retains ~30% of the time
+        turnover = rng.random() > 0.3
+        return PassResult(completed=False, turnover=turnover)

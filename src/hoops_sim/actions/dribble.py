@@ -140,6 +140,7 @@ def resolve_dribble_move(
     success_prob = ball_handle / 100.0
     success_prob *= energy_pct  # Fatigue reduces effectiveness
     success_prob -= defender_lateral / 200.0  # Defender resistance
+    success_prob = max(0.05, min(0.95, success_prob))  # Clamp to [5%, 95%]
 
     if rng.random() < success_prob:
         # Move succeeded
