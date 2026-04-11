@@ -22,6 +22,7 @@ passes, cuts, drives, and shots -- all consuming real time and space.
 
 from __future__ import annotations
 
+import enum
 from dataclasses import dataclass, field
 
 from hoops_sim.actions.dribble import (
@@ -73,6 +74,7 @@ from hoops_sim.narration.engine import NarrationEvent
 from hoops_sim.narration.events import (
     BallAdvanceEvent,
     BlockEvent,
+    CrowdReactionEvent,
     DribbleMoveEvent,
     DriveEvent,
     FoulEvent,
@@ -124,6 +126,14 @@ from hoops_sim.utils.rng import RNGManager
 
 # Maximum ticks per possession to prevent infinite loops
 MAX_TICKS_PER_POSSESSION = 300  # 30 seconds
+
+
+class ShotOutcome(enum.Enum):
+    """Outcome of a shot attempt for possession tracking."""
+
+    MADE = "made"           # Basket scored -- possession should flip (other team inbounds)
+    OFFENSIVE_REBOUND = "oreb"   # Missed + OREB -- same team retains
+    DEFENSIVE_REBOUND = "dreb"   # Missed + DREB (or block) -- possession should flip
 
 
 @dataclass
@@ -419,10 +429,7 @@ class GameSimulator:
         if not possession_resolved:
             handler = self._get_ball_handler(home_on_offense)
             if handler:
-                offense_retained = self._execute_shot(handler, home_on_offense, catch_and_shoot=False)
-                if offense_retained:
-                    # Offensive rebound on forced shot -- still end (avoid infinite loop)
-                    pass
+                self._execute_shot(handler, home_on_offense, catch_and_shoot=False)
             self._end_possession_and_flip()
 
     def _process_ball_handler_tick(
@@ -479,12 +486,13 @@ class GameSimulator:
             def_dist = self.court.defender_distance(player.id, home_on_offense)
             if def_dist < 5.0 and self._rng.random() < 0.4:
                 self._execute_dribble_move(handler, home_on_offense)
-            offense_retained = self._execute_shot(handler, home_on_offense, catch_and_shoot=False)
-            if not offense_retained:
-                self._end_possession_and_flip()
-                return True
-            # Offensive rebound: possession continues (don't flip)
-            return False
+            outcome = self._execute_shot(handler, home_on_offense, catch_and_shoot=False)
+            if outcome == ShotOutcome.OFFENSIVE_REBOUND:
+                # Offensive rebound: possession continues (don't flip)
+                return False
+            # Made basket or defensive rebound: possession ends and flips
+            self._end_possession_and_flip()
+            return True
 
         elif action.action == "drive":
             # Execute a dribble move to create space before driving
@@ -1397,11 +1405,13 @@ class GameSimulator:
         handler: PlayerCourtState,
         home_on_offense: bool,
         catch_and_shoot: bool = False,
-    ) -> bool:
+    ) -> ShotOutcome:
         """Execute a shot attempt using the 18-factor shot probability system.
 
-        Returns True if the offense retains possession (made basket or offensive
-        rebound). Returns False if possession should flip to the other team.
+        Returns a ShotOutcome indicating how the possession should continue:
+        - MADE: basket scored, possession flips (other team inbounds)
+        - OFFENSIVE_REBOUND: same team retains possession
+        - DEFENSIVE_REBOUND: possession flips to other team
         """
         gs = self.game_state
         player = handler.player
@@ -1521,7 +1531,7 @@ class GameSimulator:
             # Reset dribble separation
             handler.fsm.defender_separation = 3.0
             handler.fsm.reset_combo()
-            return True  # Made basket: offense retains (inbound)
+            return ShotOutcome.MADE
         else:
             self.scoreboard.record_miss(
                 player_id=player.id,
@@ -1570,12 +1580,16 @@ class GameSimulator:
 
             handler.fsm.defender_separation = 3.0
             handler.fsm.reset_combo()
-            return oreb  # True if offensive rebound retained possession
+            return ShotOutcome.OFFENSIVE_REBOUND if oreb else ShotOutcome.DEFENSIVE_REBOUND
 
     def _execute_drive(
         self, handler: PlayerCourtState, home_on_offense: bool,
     ) -> bool:
-        """Execute a drive with micro-action integration. Returns True if resolved."""
+        """Execute a drive with micro-action integration.
+
+        Returns True if the possession is resolved (shot taken, turnover, foul).
+        The caller is responsible for calling _end_possession_and_flip().
+        """
         gs = self.game_state
         player = handler.player
         is_home = home_on_offense
@@ -1723,6 +1737,7 @@ class GameSimulator:
             # And-one check on drives
             if self._phys_rng.random() < finish.foul_draw_chance:
                 self._free_throws(handler, 1, is_home)
+            return True  # Made basket: resolved, caller will flip
         else:
             self.scoreboard.record_miss(
                 player_id=player.id,
@@ -1730,9 +1745,10 @@ class GameSimulator:
                 is_home=is_home,
                 is_three=False,
             )
-            self._resolve_rebound(home_on_offense)
-
-        return True
+            oreb = self._resolve_rebound(home_on_offense)
+            if oreb:
+                return False  # Offensive rebound: possession continues
+            return True  # Defensive rebound: resolved, caller will flip
 
     def _execute_pass(
         self, handler: PlayerCourtState, target_id: int, home_on_offense: bool,
@@ -2298,6 +2314,23 @@ class GameSimulator:
         """Feed a rich narration event into the broadcast mixer."""
         if self.broadcast_mixer is not None:
             self.broadcast_mixer.add_event(event)
+
+        # Auto-emit crowd reactions for big plays
+        if isinstance(event, ShotResultEvent) and event.made:
+            if event.is_dunk:
+                self._emit_crowd("erupts")
+            elif event.is_three and event.lead and abs(event.lead) <= 5:
+                self._emit_crowd("erupts")
+        elif isinstance(event, BlockEvent):
+            self._emit_crowd("erupts")
+
+    def _emit_crowd(self, reaction_type: str) -> None:
+        """Emit a crowd reaction event (only ~50% of the time to avoid spam)."""
+        if self._rng.random() < 0.5 and self.broadcast_mixer is not None:
+            self.broadcast_mixer.add_event(CrowdReactionEvent(
+                reaction_type=reaction_type,
+                **self._make_base_fields(),
+            ))
 
     def _make_base_fields(self) -> dict:
         """Return common fields for narration events."""

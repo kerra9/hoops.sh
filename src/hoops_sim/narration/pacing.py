@@ -201,13 +201,14 @@ class PacingManager:
             self._consecutive_high = 0
             self._consecutive_low = 0
 
-        # Force a breather after 3 consecutive high possessions
-        if self._consecutive_high >= 3 and raw < 0.9:
-            return raw * 0.6
+        # Soften rhythm for text-only mode: the narration IS the game,
+        # so forced breathers feel like content is missing, not pacing.
+        if self._consecutive_high >= 4 and raw < 0.9:
+            return raw * 0.85  # Mild dampening, not a hard suppression
 
         # Boost after 3+ quiet possessions
-        if self._consecutive_low >= 3 and raw >= 0.3:
-            return min(1.0, raw * 1.3)
+        if self._consecutive_low >= 2 and raw >= 0.3:
+            return min(1.0, raw * 1.4)
 
         return raw
 
