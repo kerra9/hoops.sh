@@ -7,9 +7,10 @@ from hoops_sim.shot.probability import ShotContext, calculate_shot_probability
 
 class TestShotProbability:
     def test_base_probability(self):
+        # S-curve calibration: 80-rated produces ~45-48% base (realistic)
         ctx = ShotContext(base_rating=80)
         prob = calculate_shot_probability(ctx)
-        assert 0.5 < prob < 0.95
+        assert 0.35 < prob < 0.60
 
     def test_higher_rating_higher_prob(self):
         good = calculate_shot_probability(ShotContext(base_rating=90))

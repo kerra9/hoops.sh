@@ -1131,6 +1131,11 @@ class GameSimulator:
         if self._pending_screener_id is None:
             return False
 
+        # Guard: screener must not be the ball handler (self-referential play)
+        if self._pending_screener_id == handler.player_id:
+            self._pending_screener_id = None
+            return False
+
         screener_pcs = self.court.get_player_state(self._pending_screener_id)
         if screener_pcs is None:
             self._pending_screener_id = None
@@ -1242,8 +1247,20 @@ class GameSimulator:
     def _execute_dribble_move(
         self, handler: PlayerCourtState, home_on_offense: bool,
     ) -> None:
-        """Execute a dribble move using the full dribble system."""
+        """Execute a dribble move using the full dribble system.
+
+        Hard cap: 3 moves per chain (4 for ball_handle > 90).
+        """
+        # Dribble move cap: skip if at maximum
+        if not handler.fsm.can_dribble:
+            return
+
         player = handler.player
+        # Set cap based on ball handling
+        handler.fsm.set_dribble_cap(player.attributes.playmaking.ball_handle)
+        if not handler.fsm.can_dribble:
+            return
+
         def_dist = self.court.defender_distance(player.id, home_on_offense)
         closest_def = self.court.closest_defender_to(handler.position, home_on_offense)
 
@@ -1300,7 +1317,7 @@ class GameSimulator:
         ))
 
         if result.success:
-            handler.fsm.defender_separation += result.separation
+            handler.fsm.add_separation(result.separation)
             handler.fsm.increment_combo(True)
 
             if result.ankle_breaker:
@@ -1708,6 +1725,11 @@ class GameSimulator:
         """Execute a pass with pass type selection. Returns True if stolen."""
         player = handler.player
         is_home = home_on_offense
+
+        # Guard: passer must not be the receiver (self-referential play)
+        if target_id == handler.player_id:
+            return False
+
         target = self.court.get_player_state(target_id)
         if target is None:
             return False

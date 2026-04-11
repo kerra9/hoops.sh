@@ -12,9 +12,15 @@ from typing import Optional
 
 from hoops_sim.engine.game import GameState
 from hoops_sim.models.stats import TeamGameStats
-from hoops_sim.narration.stat_tracker import LiveStatTracker
 from hoops_sim.psychology.confidence import ConfidenceTracker
 from hoops_sim.psychology.momentum import MomentumTracker
+
+# Optional import: LiveStatTracker is no longer a hard dependency.
+# The scoreboard can operate without it (decoupled architecture).
+try:
+    from hoops_sim.narration.stat_tracker import LiveStatTracker as _LiveStatTracker
+except ImportError:
+    _LiveStatTracker = None  # type: ignore[assignment,misc]
 
 
 class Scoreboard:

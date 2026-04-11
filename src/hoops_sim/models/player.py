@@ -18,6 +18,22 @@ from hoops_sim.models.shooting_profile import ShootingProfile
 from hoops_sim.models.tendencies import PlayerTendencies
 
 
+@dataclass
+class PlayerIdentity:
+    """Broadcast identity for narration flavor.
+
+    Provides announcer-friendly nicknames, signature moves,
+    celebration styles, and play style descriptions used by
+    the broadcast layer to add personality to narration.
+    """
+
+    announcer_nickname: str = ""       # "The Beard", "Big Fundamental"
+    signature_moves: list = field(default_factory=list)  # ["step-back three", "euro step"]
+    play_style: str = ""               # "crafty veteran", "explosive athlete"
+    celebration_style: str = ""        # "stares down defender", "flexes"
+    known_for: list = field(default_factory=list)  # ["deep threes", "lockdown defense"]
+
+
 class Position(enum.Enum):
     """Player positions."""
 
@@ -64,6 +80,7 @@ class Player:
     shooting_profile: ShootingProfile = field(default_factory=ShootingProfile)
     personality: PlayerPersonality = field(default_factory=PlayerPersonality)
     lifestyle: PlayerLifestyle = field(default_factory=PlayerLifestyle)
+    identity: PlayerIdentity = field(default_factory=PlayerIdentity)
 
     # Runtime state (not part of persistent data)
     current_energy: float = 100.0

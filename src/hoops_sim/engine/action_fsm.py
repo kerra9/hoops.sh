@@ -160,8 +160,14 @@ class ActionStateMachine:
     combo_count: int = 0
     last_dribble_success: bool = False
 
-    # Separation from defender (feet)
+    # Separation from defender (feet) -- capped at 5.0, decays 0.5/second
     defender_separation: float = 3.0
+    # Maximum separation (feet)
+    MAX_SEPARATION: float = 5.0
+    # Separation decay per tick (0.5 ft/sec * 0.1 sec/tick = 0.05 ft/tick)
+    SEPARATION_DECAY_PER_TICK: float = 0.05
+    # Maximum dribble moves per action chain (4 for ball_handle > 90)
+    MAX_DRIBBLE_MOVES: int = 3
 
     # Whether this player is on offense
     is_offense: bool = True
@@ -187,9 +193,17 @@ class ActionStateMachine:
         """Advance the FSM by one tick.
 
         Returns True if the action just completed (ticks hit 0).
+        Also applies separation decay each tick.
         """
         if self.ticks_remaining > 0:
             self.ticks_remaining -= 1
+
+        # Separation decay: 0.5 feet/sec = 0.05 feet/tick at 0.1s/tick
+        if self.defender_separation > 0.0:
+            self.defender_separation = max(
+                0.0, self.defender_separation - self.SEPARATION_DECAY_PER_TICK,
+            )
+
         return self.ticks_remaining == 0
 
     @property
@@ -226,6 +240,25 @@ class ActionStateMachine:
             self.last_dribble_success = True
         else:
             self.reset_combo()
+
+    def add_separation(self, amount: float) -> None:
+        """Add separation from a dribble move, capped at MAX_SEPARATION."""
+        self.defender_separation = min(
+            self.MAX_SEPARATION,
+            self.defender_separation + amount,
+        )
+
+    @property
+    def can_dribble(self) -> bool:
+        """Whether the player can execute another dribble move (cap check)."""
+        return self.combo_count < self.MAX_DRIBBLE_MOVES
+
+    def set_dribble_cap(self, ball_handle: int) -> None:
+        """Set the dribble move cap based on ball handling rating.
+
+        Elite handlers (90+) get 4 moves; everyone else gets 3.
+        """
+        self.MAX_DRIBBLE_MOVES = 4 if ball_handle > 90 else 3
 
 
 # ---------------------------------------------------------------------------
